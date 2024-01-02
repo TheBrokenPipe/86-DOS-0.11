@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# 86-DOS text files must use CRLF and have 0x1A EOF markers, we simply mark them as binary
+*.asm binary
+*.doc binary
+*.hex binary
+*.prn binary
