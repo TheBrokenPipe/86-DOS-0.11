@@ -127,7 +127,7 @@ DONE:
 	MOV	AH,SETDMA
 	INT	21H
 	MOV	CX,BP
-	SUB	CX,1F2H
+	SUB	CX,START-7FH
 	AND	CL,80H
 	JCXZ	EXIT
 	ROL	CX
@@ -152,4 +152,4 @@ ADDR:	DB	"Address out of range--conversion aborted$"
 DIRFUL:	DB	"Disk directory full$"
 
 START:
-
+
