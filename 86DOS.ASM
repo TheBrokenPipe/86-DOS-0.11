@@ -214,12 +214,12 @@ SMFAT:
 	STOW			;Set abort address--displacement
 	MOV	AX,CS
 	MOV	B,[ENTRYPOINT],LONGJUMP
-	MOV	W,[ENTRYPOINT+1],ENTRY
-	MOV	W,[ENTRYPOINT+3],CS
+	MOV	[ENTRYPOINT+1],ENTRY
+	MOV	[ENTRYPOINT+3],CS
 	STOW
 	STOW
 	STOW
-	MOV	W,[INTBASE+4],COMMAND
+	MOV	[INTBASE+4],COMMAND
 	MOV	DI,INTBASE+14H
 	MOV	AX,BIOSREAD
 	STOW
@@ -227,12 +227,12 @@ SMFAT:
 	STOW
 	STOW			;Add 2 to DI
 	STOW
-	MOV	W,[INTBASE+18H],BIOSWRITE
+	MOV	[INTBASE+18H],BIOSWRITE
 	MOV	DX,CS
 	MOV	DS,DX
 	ADD	DX,BP		;Next free segment
-	MOV	W,[DMAADD],128
-	MOV	W,[DMAADD+2],DX
+	MOV	[DMAADD],128
+	MOV	[DMAADD+2],DX
 	MOV	AX,[DRVTAB]
 	MOV	[CURDRV],AX
 	MOV	CX,DX		;Start scanning just after DOS
@@ -254,10 +254,10 @@ SETEND:
 	MOV	[ENDMEM],CX
 	XOR	CX,CX
 	MOV	DS,CX
-	MOV	W,[EXIT],100H
-	MOV	W,[EXIT+2],DX
-	MOV	W,[INTBASE+0CH],100H
-	MOV	W,[INTBASE+0EH],DX
+	MOV	[EXIT],100H
+	MOV	[EXIT+2],DX
+	MOV	[INTBASE+0CH],100H
+	MOV	[INTBASE+0EH],DX
 	CALL	SETMEM
 	MOV	SI,HEADER
 	CALL	OUTMES
@@ -1097,23 +1097,23 @@ SETUP:
 	ADD	BX,7FH		;See if there is any space left
 	JC	SEGEND
 	AND	BL,80H
-	NEG	BX		;Amount of room left in segment
+	NEG	BX	;These instructions divide by 128
 	ROL	BX
 	XCHG	BL,BH
-	JNZ	CHKFIT
-	MOV	BH,2
-CHKFIT:
-	CMP	CX,BX		;See if it will fit in one segment
-	JBE	OK
+	JNZ	CHKMAX
+	MOV	BH,2	;All 512 records OK
+CHKMAX:
+	CMP	CX,BX
+	JBE	SAVCNT
 	MOV	CX,BX
 	MOV	B,[DSKERR],2	;Flag that trimming took place
-OK:
-	MOV	[RECCNT],CX	;Record count
+SAVCNT:
+	MOV	[RECCNT],CX
 	RET
 SEGEND:
 	MOV	B,[DSKERR],2
 	MOV	CX,0
-	POP	BX		;Kill return address
+	POP	BX
 	RET
 
 
@@ -1121,7 +1121,7 @@ FNDCLUS:
 
 ; Inputs:
 ;	DS = CS
-;	CX = No. of clusters to skip
+;	CX = No. of clusters
 ;	BP = Base of drive parameters
 ;	SI = FAT pointer
 ;	ES:DI point to FCB
@@ -2240,4 +2240,4 @@ SSSAVE	DS	2
 SPSAVE	DS	2
 CURDRV	DS	2
 DRVTAB:				;Address of start of DPBs
-
+

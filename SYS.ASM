@@ -26,11 +26,11 @@ START:
 	MOV	AH,1
 	INT	38
 	JC	WRERR
-	MOV	DX,TRANSOK
+	MOV	DX,SYSOK
 	JP	QUIT
 
 RDERR:
-	MOV	DX,RDERMSG
+	MOV	DX,ERREAD
 
 QUIT:
 	MOV	AH,9
@@ -38,21 +38,17 @@ QUIT:
 	INT	32
 
 WRERR:
-	MOV	DX,WRERMSG
+	MOV	DX,ERWRIT
 	JP	QUIT
 
 BADDRV:
-	MOV	DX,BADDRVMSG
+	MOV	DX,DRVBAD
 	JP	QUIT
 
-TRANSOK:
-	DB	"System transfered$"
-RDERMSG:
-	DB	"Disk read error$"
-WRERMSG:
-	DB	"Disk write error$"
-BADDRVMSG:
-	DB	"Bad drive specification"
+SYSOK:	DB	"System transfered$"
+ERREAD:	DB	"Disk read error$"
+ERWRIT:	DB	"Disk write error$"
+DRVBAD:	DB	"Bad drive specification"
 
 END:
-
+
