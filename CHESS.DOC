@@ -1,0 +1,20 @@
+This chess game uses algebraic chess notation. The files are lettered
+"a" to "h" and the ranks are numbered 1 to 8. The lower left-hand corner
+(from White's viewpoint) is a1.
+
+Moves are entered as ff-tt (f=from, t=to), so to play the white king's
+pawn up two squares you would enter E2-E4. You must enter your file
+letters in upper case, while the computer will always use lower case.
+
+To castle, enter only the king's move. The computer castles the same way.
+To capture En Passant, enter your pawn's actual move.
+
+Ply depth is the number of half-turns the computer looks ahead. For
+example, with a ply depth of 3, the computer will consider
+	1. All of his possible moves
+	2. All of your responses to those moves.
+	3. All of his possible replies to your responses.
+Start at ply depth 2 to get the feel for it.
+
+A move of "R" will restart the game.
+
