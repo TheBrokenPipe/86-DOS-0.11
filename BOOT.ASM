@@ -82,7 +82,15 @@ SECT:
 	MOV	AL,BL
 	OUTB	DISK+2
 	MOV	CX,128
-	INB	DISK+4
+
+	IF	TARBELL
+	INB	DISK		;Get head load status
+	ENDIF
+
+	IF	CROMEMCO
+	INB	DISK+4		;Get head load status
+	ENDIF
+
 	TEST	AL,20H
 	MOV	AL,READCOM
 	JNZ	OUTCOM
@@ -145,4 +153,4 @@ BOOT:
 	MOV	ES,AX
 	MOV	DS,AX
 	JMP	0,SEG
-
+

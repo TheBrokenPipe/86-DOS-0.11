@@ -278,13 +278,13 @@ PUTSEC:
 	MOV	CX,80H
 
 	IF	TARBELL
-	INB	DISK		;Get head load bit
+	IN	DISK		;Get head load bit
 	ENDIF
 
 	IF	CROMEMCO
-	INB	DISK+4		;Get head load bit
+	IN	DISK+4		;Get head load bit
 	XCHG	AL,AH
-	OUTB	DISK+4		;Turn on auto-wait
+	OUT	DISK+4		;Turn on auto-wait
 	XCHG	AL,AH
 	ENDIF
 
@@ -373,7 +373,7 @@ WRDONE:
 
 HOME:
 	IF	CROMEMCO
-	TEST	AH,10H		;Check seek speed bit
+	TEST	AH,10H		;Check 8" (PerSci) bit
 	JNZ	RESTORE
 	ENDIF
 
@@ -391,7 +391,7 @@ TRYHOM:
 
 MOVHEAD:
 	IF	CROMEMCO
-	TEST	AH,10H		;Check seek speed bit
+	TEST	AH,10H		;Check 8" (PerSci) bit
 	JNZ	FASTSK
 	ENDIF
 
@@ -399,8 +399,8 @@ DCOM:
 	OUT	DISK
 	MOV	AL,50
 DELAY:
-	DEC	AL		;Delay 10 microseconds
-	JNZ	DELAY
+	DEC	AL
+	JNZ	DELAY		;Delay 100 microseconds
 GETSTAT:
 	IN	DISK+4
 	TEST	AL,DONEBIT
@@ -518,7 +518,7 @@ FAT3:	DS	LFAT
 
 ; Cromemco drive select byte is derived as follows:
 ;	Bit 7 = 0
-;	Bit 6 = 1 if fast seek (PerSci)
+;	Bit 6 = X (unassigned)
 ;	Bit 5 = 1 (motor on)
 ;	Bit 4 = 0 for 5", 1 for 8" drives
 ;	Bit 3 = 1 for drive 3
@@ -587,7 +587,7 @@ FAT2:	DS	SFAT
 	ENDIF
 
 	IF	CUSTOM
-; Table for 2 large drives without fast seek
+; Table for 2 large drives
 DRVTAB:	DB	31H,32H
 TRKPT:	DB	0,1
 TRKTAB:	DB	-1,-1
@@ -602,4 +602,4 @@ INITTAB:DB	2
 FAT0:	DS	LFAT
 FAT1:	DS	LFAT
 	ENDIF
-
+
