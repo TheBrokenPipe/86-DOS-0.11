@@ -870,180 +870,252 @@ IC5:	MOV	AL,[BX]		; Fetch King position
 	AND	AL,7		; Get piece type
 	MOV	[T1],AL		; Save
 
+;***********************************************************
+; ATTACK ROUTINE
+;***********************************************************
+; FUNCTION:   --  To find all attackers on a given square
+;                 by scanning outward from the square
+;                 until a piece is found that attacks
+;                 that square, or a piece is found that
+;                 doesn't attack that square, or the edge
+;                 of the board is reached.
 ;
-; *** NOTE FROM BROKEN PIPE ***
+;                 In determining which pieces attack
+;                 a square, this routine also takes into
+;                 account the ability of certain pieces to
+;                 attack through another attacking piece. (For
+;                 example a queen lined up behind a bishop
+;                 of her same color along a diagonal.) The
+;                 bishop is then said to be transparent to the
+;                 queen, since both participate in the
+;                 attack.
 ;
-; THIS ATTACK ROUTINE DOES NOT MATCH SARGON'S ATTACK ROUTINE,
-; IT IS MOST LIKELY TIM PATERSON'S OWN IMPLEMENTATION.
+;                 In the case where this routine is called
+;                 by CASTLE or INCHK, the routine is
+;                 terminated as soon as an attacker of the
+;                 opposite color is encountered.
 ;
-; I DO NOT KNOW HOW TO PLAY CHESS, SO I CANNOT UNDERSTAND ANY
-; OF THE CODE. I NEED SOMEONE EXPERIENCED IN CHESS AND CHESS
-; PROGRAMMING TO DISASSEMBLE THIS ROUTINE AND ITS SUBROUTINES.
+; CALLED BY:  --  POINTS
+;                 PINFND
+;                 CASTLE
+;                 INCHK
 ;
-ATTACK:	PUSH	CX
-	MOV	BP,[M3]
-	ADD	BP,BOARD
-	MOV	DH,0
-	MOV	SI,DIRECT+TBASE
-	MOV	AH,6
-	CALL	L102D
-	MOV	AH,2
-	CALL	L102D
-	MOV	AH,32
-	MOV	AL,[BP+11]
-	AND	AL,87H
-	CMP	AL,81H
-	JNZ	L0FF8
-	OR	[BP+11],AH
-L0FF8:	MOV	AL,[BP+9]
-	AND	AL,87H
-	CMP	AL,81H
-	JNZ	L1004
-	OR	[BP+9],AH
-L1004:	MOV	AL,[BP-11]
-	AND	AL,87H
-	CMP	AL,1
-	JNZ	L1010
-	OR	[BP-11],AH
-L1010:	MOV	AL,[BP-9]
-	AND	AL,87H
-	CMP	AL,1
-	JNZ	L101C
-	OR	[BP-9],AH
-L101C:	MOV	SI,DIRECT+TBASE
-	MOV	AH,3
-	CALL	L1046
-	MOV	AH,4
-	CALL	L1046
-	XOR	AL,AL
-	POP	CX
-	RET
+; CALLS:      --  ATKADJ
+;                 ATKOUT
+;
+; ARGUMENTS:  --  None
+;***********************************************************
+ATTACK:	PUSH	CX		; Save Register CX
+	MOV	BP,[M3]		; Get piece index
+	ADD	BP,BOARD	; Add board pointer to it
+	MOV	DH,0		; Init. scan count/flags
+	MOV	SI,DIRECT+TBASE	; Load direction table
+	MOV	AH,KING		; Check for a King
+	CALL	ATKADJ		; Scan adjacent squares
+	MOV	AH,KNIGHT	; Check for a Knight
+	CALL	ATKADJ		; Scan adjacent squares
+	MOV	AH,20H		; Bit 5 set
+	MOV	AL,[BP+11]	; Get piece at +11
+	AND	AL,87H		; Clear flag bit
+	CMP	AL,BPAWN	; Black Pawn ?
+	JNZ	AT5		; No - jump
+	OR	[BP+11],AH	; Turn on bit 5
+AT5:	MOV	AL,[BP+9]	; Get piece at +9
+	AND	AL,87H		; Clear flag bit
+	CMP	AL,BPAWN	; Black Pawn ?
+	JNZ	AT10		; No - jump
+	OR	[BP+9],AH	; Turn on bit 5
+AT10:	MOV	AL,[BP-11]	; Get piece at -11
+	AND	AL,87H		; Clear flag bit
+	CMP	AL,PAWN		; White Pawn ?
+	JNZ	AT15		; No - jump
+	OR	[BP-11],AH	; Turn on bit 5
+AT15:	MOV	AL,[BP-9]	; Get piece at -9
+	AND	AL,87H		; Clear flag bit
+	CMP	AL,PAWN		; White Pawn ?
+	JNZ	AT20		; No - jump
+	OR	[BP-9],AH	; Turn on bit 5
+AT20:	MOV	SI,DIRECT+TBASE	; Load direction table
+	MOV	AH,BISHOP	; Check for a Bishop
+	CALL	ATKOUT		; Scan outwards
+	MOV	AH,ROOK		; Check for a Rook
+	CALL	ATKOUT		; Scan outwards
+	XOR	AL,AL		; No attackers
+	POP	CX		; Restore CX reg
+	RET			; Return
 
-L102D:	MOV	CX,8
-L1030:	XCHG	AX,BX
-	LODB
-	CBW
-	XCHG	AX,BX
-	MOV	DI,BP
-	ADD	DI,BX
-	MOV	AL,[DI]
-	AND	AL,7
-	CMP	AL,AH
-	JNZ	L1043
-	CALL	L107C
-L1043:	LOOP	L1030
-	RET
+;***********************************************************
+; ATTACK ADJACENT SCAN ROUTINE
+;***********************************************************
+; FUNCTION:   --  To scan for a specified attacker on adjacent
+;                 squares.
+;
+; CALLED BY:  --  ATTACK
+;
+; CALLS:      --  ATKCHK
+;
+; ARGUMENTS:  --  The piece under attack. The attacker.
+;***********************************************************
+ATKADJ:	MOV	CX,8		; 8 directions to scan
+AA5:	XCHG	AX,BX		; Save AX
+	LODB			; Get direction byte
+	CBW			; Convert to word
+	XCHG	AX,BX		; Save direction and restore AX
+	MOV	DI,BP		; Load pointer to piece
+	ADD	DI,BX		; Add direction constant
+	MOV	AL,[DI]		; Get attacking piece
+	AND	AL,7		; Get piece type
+	CMP	AL,AH		; Same as what we want ?
+	JNZ	AA10		; No - jump
+	CALL	ATKCHK		; Check and save attacker
+AA10:	LOOP	AA5		; Go check for next direction
+	RET			; Return
 
-L1046:	MOV	CL,4
-L1048:	MOV	DX,0C0H
-	XCHG	AX,BX
-	LODB
-	CBW
-	XCHG	AX,BX
-	MOV	DI,BP
-L1051:	ADD	DI,BX
-	MOV	AL,[DI]
-	AND	AL,27H
-	JZ	L1051
-	CMP	AL,AH
-	JZ	L106D
-	CMP	AL,5
-	JZ	L1068
-	CMP	AL,33
-	JZ	L106A
-L1065:	LOOP	L1048
-	RET
-L1068:	INC	DH
-L106A:	AND	B,[DI],0DFH
-L106D:	MOV	AL,[DI]
-	ADD	AL,128
-	RCR	AL
-	AND	DL,AL
-	JZ	L1065
-	CALL	L107C
-	JP	L1051
+;***********************************************************
+; ATTACK OUTWARD SCAN ROUTINE
+;***********************************************************
+; FUNCTION:   --  To scan for a specified attacker outwards
+;                 from the piece under attack, until found
+;                 or edge of the board is reached.
+;
+; CALLED BY:  --  ATTACK
+;
+; CALLS:      --  ATKCHK
+;
+; ARGUMENTS:  --  The piece under attack. The attacker.
+;***********************************************************
+ATKOUT:	MOV	CL,4		; 4 directions to scan
+AO5:	MOV	DX,0C0H		; Bitmask for color flags
+	XCHG	AX,BX		; Save AX
+	LODB			; Get direction byte
+	CBW			; Convert to word
+	XCHG	AX,BX		; Save direction and restore AX
+	MOV	DI,BP		; Load pointer to piece
+AO10:	ADD	DI,BX		; Add direction constant
+	MOV	AL,[DI]		; Get attacking piece
+	AND	AL,27H		; Get piece type and bit 5
+	JZ	AO10		; No piece, keep going
+	CMP	AL,AH		; Same as what we want ?
+	JZ	AO22		; Yes - jump
+	CMP	AL,QUEEN	; Queen ?
+	JZ	AO20		; Yes - jump
+	CMP	AL,PAWN+20H	; Pawn with bit 5 ?
+	JZ	AO21		; Yes - jump
+AO15:	LOOP	AO5		; Go check for next direction
+	RET			; Return
+AO20:	INC	DH		; Set Queen found flag
+AO21:	AND	B,[DI],0DFH	; Remove bit 5 for piece
+AO22:	MOV	AL,[DI]		; Get piece
+	ADD	AL,80H		; CY if back, NC if white
+	RCR	AL		; Bit 7 set if black, bit 6 if white
+	AND	DL,AL		; Keep only bits 6 and 7
+	JZ	AO15		; Nothing, next direction
+	CALL	ATKCHK		; Check and save attack
+	JP	AO10		; Keeping going that direction
 
-L107C:	MOV	AL,[DI]
-	CMP	B,[T1],7
-	JZ	L10B3
-	XOR	AL,[BP]
-	JNS	RET
+;***********************************************************
+; ATTACK CHECK AND SAVE ROUTINE
+;***********************************************************
+; FUNCTION:   --  To check if a piece can attack the target
+;                 square and save the attacking piece value
+;                 in the attack list.
+;
+;                 The pin piece list is checked for the
+;                 attacking piece, and if found there, the
+;                 piece is not included in the attack list.
+;
+;                 In the case where ATTACK is called by
+;                 CASTLE or INCHK, control is returned to
+;                 the aforementioned routines as soon as an
+;                 attacker of the opposite color is encountered.
+;
+; CALLED BY:  --  ATTACK
+;
+; CALLS:      --  None
+;
+; ARGUMENTS:  --  The attacking piece. The piece under attack.
+;***********************************************************
+ATKCHK:	MOV	AL,[DI]		; Get piece
+	CMP	B,[T1],7	; Call from POINTS ?
+	JZ	ACK10		; Yes - jump
+	XOR	AL,[BP]		; Attacker and target same color ?
+	JNS	RET		; Yes - return
 	POP	AX
-	POP	AX
-	MOV	AX,0DFFFH
-	CMP	[BP+9],AL
-	JZ	L1097
-	AND	[BP+9],AH
-L1097:	CMP	[BP+11],AL
-	JZ	L109F
-	AND	[BP+11],AH
-L109F:	CMP	[BP-9],AL
-	JZ	L10A7
-	AND	[BP-9],AH
-L10A7:	CMP	[BP-11],AL
-	JZ	L10AF
-	AND	[BP-11],AH
-L10AF:	MOV	AL,1
-	POP	CX
-	RET
-L10B3:	PUSH	CX
+	POP	AX		; Set SP level to ATTACK
+	MOV	AX,0DFFFH	; FF (border) in AL and DF in AH
+	CMP	[BP+9],AL	; Is +9 border ?
+	JZ	ACK5		; Yes, jump
+	AND	[BP+9],AH	; Remove bit 5 for piece
+ACK5:	CMP	[BP+11],AL	; Is +11 border ?
+	JZ	ACK6		; Yes - jump
+	AND	[BP+11],AH	; Remove bit 5 for piece
+ACK6:	CMP	[BP-9],AL	; Is -9 border ?
+	JZ	ACK7		; Yes - jump
+	AND	[BP-9],AH	; Remove bit 5 for piece
+ACK7:	CMP	[BP-11],AL	; Is -11 border ?
+	JZ	ACK8		; Yes - jump
+	AND	[BP-11],AH	; Remove bit 5 for piece
+ACK8:	MOV	AL,1		; Set attacker found flag
+	POP	CX		; Restore CX reg
+	RET			; Return from ATTACK
+ACK10:	PUSH	CX		; Save regs
 	PUSH	DI
-	MOV	CL,[NPINS]
-	JCXZ	L10E0
-	PUSH	AX
-	MOV	AX,DI
-	SUB	AX,BOARDA
-	MOV	DI,PLISTA
-L10C4:	OR	AL,AL
-	REPE
-	SCAB
-	JNZ	L10DF
-	OR	AH,AH
-	JNZ	L10DB
-	MOV	AH,[DI+9]
-	CMP	AH,BL
-	JZ	L10C4
-	NEG	AH
-	CMP	AH,BL
-	JZ	L10C4
-L10DB:	POP	AX
+	MOV	CL,[NPINS]	; Number of pinned pieces
+	JCXZ	ACK26		; No pins - jump
+	PUSH	AX		; Save AX
+	MOV	AX,DI		; Load piece pointer in AX
+	SUB	AX,BOARDA	; Minus BOARDA for position
+	MOV	DI,PLISTA	; Pin list address
+ACK15:	OR	AL,AL		; Set flags for REP
+	REPZ
+	SCAB			; Search list for position
+	JNZ	ACK25		; Continue if not found
+	OR	AH,AH		; Is this the first find ?
+	JNZ	ACK20		; No - jump
+	MOV	AH,[DI+9]	; Get direction
+	CMP	AH,BL		; Same as attacking direction ?
+	JZ	ACK15		; Yes - jump
+	NEG	AH		; Opposite direction ?
+	CMP	AH,BL		; Same as attacking direction ?
+	JZ	ACK15		; Yes - jump
+ACK20:	POP	AX		; Restore regs.
 	POP	DI
 	POP	CX
-	RET
-L10DF:	POP	AX
-L10E0:	MOV	CL,AL
-	AND	CL,7
-	MOV	DI,PVALUE+TBASE
-	ADD	DI,CX
-	MOV	CL,[DI]
-	MOV	DI,ATKLST
-	TEST	AL,80H
-	JZ	L10F6
-	ADD	DI,7
-L10F6:	OR	DH,DH
-	JZ	L10FC
-	MOV	AL,5
-L10FC:	AND	AL,7
-	INC	B,[DI]
-	XCHG	AL,CL
-	ADD	DI,CX
-	MOV	CH,[DI]
-	TEST	CH,0FH
-	JZ	L111F
-	TEST	CH,0F0H
-	JZ	L1115
-	INC	DI
-	MOV	CH,[DI]
-	XCHG	AL,CH
-L1115:	SHL	AL
+	RET			; Return to ATTACK
+ACK25:	POP	AX		; Restore AX
+ACK26:	MOV	CL,AL		; Put piece in CL
+	AND	CL,7		; Get piece type
+	MOV	DI,PVALUE+TBASE	; PVALUE list address
+	ADD	DI,CX		; Point to piece value
+	MOV	CL,[DI]		; Get point value of piece
+	MOV	DI,ATKLST	; Init address of attack list
+	TEST	AL,80H		; Is it white ?
+	JZ	ACK30		; Yes - jump
+	ADD	DI,7		; Attack list address
+ACK30:	OR	DH,DH		; Queen found this scan ?
+	JZ	ACK31		; No - jump
+	MOV	AL,QUEEN	; Use Queen slot in attack list
+ACK31:	AND	AL,7		; Attacking piece type
+	INC	B,[DI]		; Increment list count
+	XCHG	AL,CL		; Save point value in AL
+	ADD	DI,CX		; Attack list slot address
+	MOV	CH,[DI]		; Get data already there
+	TEST	CH,0FH		; Is first slot empty ?
+	JZ	ACK40		; Yes - jump
+	TEST	CH,0F0H		; Is second slot empty ?
+	JZ	ACK35		; Yes - jump
+	INC	DI		; Increment to King slot
+	MOV	CH,[DI]		; Get byte
+	XCHG	AL,CH		; Byte to AL, point value to CH
+ACK35:	SHL	AL		; Lower bits to upper
 	SHL	AL
 	SHL	AL
 	SHL	AL
-	OR	AL,CH
-L111F:	MOV	[DI],AL
-	POP	DI
+	OR	AL,CH		; Combine with point value
+ACK40:	MOV	[DI],AL		; Put back into attack list
+	POP	DI		; Restore regs
 	POP	CX
-	RET
+	RET			; Return
 
 ;***********************************************************
 ; PIN FIND ROUTINE
@@ -2231,4 +2303,4 @@ IY:	DS	2
 BC:	DS	2
 DE:	DS	2
 HL:	DS	2
-
+
