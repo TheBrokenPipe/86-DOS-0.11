@@ -1,6 +1,19 @@
 # 86-DOS 0.11 Source Code Reconstruction
 Full source code reconstruction of 86-DOS 0.11 - the earliest released version of the earliest operating system for the Intel x86 architecture.
 
+## Progress
+<img src="./.progress/boot.svg">
+<img src="./.progress/bios.svg">
+<img src="./.progress/kernel.svg">
+<img src="./.progress/asm.svg">
+<img src="./.progress/chess.svg">
+<img src="./.progress/command.svg">
+<img src="./.progress/edlin.svg">
+<img src="./.progress/hex2bin.svg">
+<img src="./.progress/rdcpm.svg">
+<img src="./.progress/sys.svg">
+<img src="./.progress/trans.svg">
+
 ## Author
 This software was written by [@TimPaterson](https://github.com/TimPaterson) in 1980. The reconstructed source code in this repository compiles back to the exact same binaries shipped by Seattle Computer Products. Therefore, it can be fully regrded as Paterson's work.
 
