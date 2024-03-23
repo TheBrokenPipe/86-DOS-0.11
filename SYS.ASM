@@ -1,9 +1,11 @@
 FCB	EQU	5CH
 
 	ORG	100H
+	PUT	100H
+
 	JMP	START
-SECS:
-	DW	52	;Patch for different configs
+
+SECS:	DW	52	;Patch for different configs
 
 START:
 	MOV	AL,[FCB]
@@ -51,4 +53,4 @@ ERWRIT:	DB	"Disk write error$"
 DRVBAD:	DB	"Bad drive specification"
 
 END:
-
+

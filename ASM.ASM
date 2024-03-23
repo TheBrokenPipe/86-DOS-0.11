@@ -661,7 +661,7 @@ NOIND:
 	MOV	CH,6
 	JNC	RET
 	RCL	AL
-	JB	L0523
+	JC	L0523
 	INC	CH
 	JP	L0523
 
@@ -2949,11 +2949,11 @@ RET:	RET
 
 L1546:
 	INC	BX
-	CMP	BX,LSTBUF
+	CMP	BX,HEXBUF+128
 	JZ	RET
-	CMP	BX,BC
+	CMP	BX,L1C1B+128
 	JZ	RET
-	CMP	BX,L1C1B
+	CMP	BX,LSTBUF+128
 	JNZ	RET
 	MOV	BX,HEXBUF
 	RET
@@ -3609,7 +3609,7 @@ OPTAB:
 	DW	NONE
 	DW	NONE
 
-HEADER	DB	13,10,'Seattle Computer Products 8086 Assembler Version 2.00',13,10,'$'
+HEADER:	DB	13,10,'Seattle Computer Products 8086 Assembler Version 2.00',13,10,'$'
 ERRMES:	DM	'***** ERROR no. '
 NOSPAC:	DB	13,10,'No directory space',13,10,'$'
 HEXSUF:	DM	'H',13,10
@@ -3678,4 +3678,4 @@ IY:	DS	2
 	DS	50
 STACK:	EQU	$
 START:	EQU	$
-
+

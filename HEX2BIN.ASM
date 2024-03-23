@@ -26,7 +26,7 @@ HAVEXT:
 ;Get load offset (default is -100H)
 	MOV	AH,OPEN
 	MOV	DX,FCB
-	INT	21H
+	INT	33
 	OR	AL,AL
 	JNZ	NOFIL
 	MOV	B,[FCB+32],0
@@ -65,8 +65,8 @@ NOFIL:
 	MOV	DX,NOFILE
 QUIT:
 	MOV	AH,9
-	INT	21H
-	INT	20H
+	INT	33
+	INT	32
 
 ADERR:
 	MOV	DX,ADDR
@@ -75,7 +75,7 @@ ADERR:
 GETCH:
 	CMP	SI,BUFFER+BUFSIZ
 	JNZ	NOREAD
-	INT	21H
+	INT	33
 	OR	AL,AL
 	JNZ	ERROR
 	MOV	SI,BUFFER
@@ -109,7 +109,7 @@ HEXDIG:
 ERROR:
 	MOV	DX,ERRMES
 	MOV	AH,9
-	INT	21H
+	INT	33
 DONE:
 	MOV	DI,FCB+9
 	MOV	SI,COM
@@ -117,15 +117,15 @@ DONE:
 	MOVW
 	MOV	DX,FCB
 	MOV	AH,DELETE
-	INT	21H
+	INT	33
 	MOV	AH,CREATE
-	INT	21H
+	INT	33
 	OR	AL,AL
 	JNZ	NOROOM
 	MOV	W,[FCB+33],0
 	MOV	DX,START
 	MOV	AH,SETDMA
-	INT	21H
+	INT	33
 	MOV	CX,BP
 	SUB	CX,START-7FH
 	AND	CL,80H
@@ -134,11 +134,11 @@ DONE:
 	XCHG	CL,CH
 	MOV	AH,BLKWRT
 	MOV	DX,FCB
-	INT	21H
+	INT	33
 	MOV	AH,CLOSE
-	INT	21H
+	INT	33
 EXIT:
-	INT	20H
+	INT	32
 
 NOROOM:
 	MOV	DX,DIRFUL
@@ -152,4 +152,4 @@ ADDR:	DB	"Address out of range--conversion aborted$"
 DIRFUL:	DB	"Disk directory full$"
 
 START:
-
+

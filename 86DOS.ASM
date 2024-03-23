@@ -1,4 +1,4 @@
-; 86-DOS  High-performance operating system for the 8086  version 0.11
+; QDOS  High-performance operating system for the 8086  version 0.11
 ;	by Tim Paterson
 
 
@@ -102,6 +102,8 @@ BIOSFLUSH	EQU	27	;Disk buffer flush
 ; Start of code
 
 	ORG	0
+	PUT	100H
+
 	JMP	DOSINIT
 
 ESCTAB: 
@@ -275,7 +277,7 @@ BADCALL:
 IRET:	IRET
 
 ENTRY:	;System call entry point and dispatcher
-	POP	AX	;IP from the long call at 5
+	POP	AX		;IP from the long call at 5
 	POP	AX		;Segment from the long call at 5
 	SEG	CS
 	POP	[TEMP]		;IP from the CALL 5
@@ -2240,4 +2242,4 @@ SSSAVE	DS	2
 SPSAVE	DS	2
 CURDRV	DS	2
 DRVTAB:				;Address of start of DPBs
-
+
