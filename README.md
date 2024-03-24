@@ -32,7 +32,7 @@ This project acknowledges the intellectual property rights of Microsoft Corporat
 By accessing and using the reconstructed source code provided in this repository, you agree to do so at your own risk and assume all responsibility for any legal implications that may arise.
 
 ## Building
-All source files must be built using Seattle Computer Products' ASM-86 assembler. According to binary fragments found in the uninitialized data areas of executables, this version of 86-DOS was originally built under CP/M-80 2.2. However, since the CP/M-80 version of ASM-86 is not available online, the source files can only be assembled under DOS or Windows using the DOS version of ASM-86, branded simply as ASM. All assembly language source files in this repository use the extension <code>.ASM</code> so that they are accepted by the ASM assembler. Should a CP/M-80 version of ASM-86 surface one day, and if these files are to be built under CP/M, the extensions of the source files must be changed to <code>.A86</code>.
+All source files must be built using Seattle Computer Products' ASM-86 assembler. According to binary fragments found in the uninitialized data areas of executables, this version of 86-DOS was originally built under CDOS 2.x (a CP/M-like operating system developed by Cromemco). All assembly language source files in this repository use the extension <code>.ASM</code>, so that they are accepted by the DOS version of the ASM-86 assembler, branded simply as ASM. Should this operating system be built under CDOS or CP/M, the extensions of the source files must be changed to <code>.A86</code>.
 
 ### Source to Object
 To assemble a source file, invoke ASM with the command line:

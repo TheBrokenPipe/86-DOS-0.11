@@ -1,0 +1,3279 @@
+; Seattle Computer Products 8086 Assembler  version 2.00
+;   by Tim Paterson
+; Runs on the Z80 under CP/M
+
+FCB:	EQU	5CH
+EOL:	EQU	13	;ASCII carriage return
+OBJECT:	EQU	100H	;DEFAULT "PUT" ADDRESS
+
+;System call function codes
+PRINTMES: EQU	9
+OPEN:	EQU	15
+CLOSE:	EQU	16
+DELETE:	EQU	19
+READ:	EQU	20
+SETDMA:	EQU	26
+MAKE:	EQU	22
+SEQWRT:	EQU	21
+
+;The following equates define some token values returned by GETSYM
+UNDEFID:EQU	0	;Undefined identifier (including no nearby RET)
+CONST:	EQU	1	;Constant (including $)
+REG:	EQU	2	;8-bit register
+XREG:	EQU	3	;16-bit register (except segment registers)
+SREG:	EQU	4	;Segment register
+
+	ORG	100H
+
+	JP	BEGIN
+
+CPYRHT:	DB	'Copyright 1979 by Seattle Computer Products, Inc.'
+	DB	13,10,13,10,'$'
+
+BEGIN:
+	LD	SP,STACK
+	LD	DE,HEADER
+	LD	C,PRINTMES
+	CALL	SYSTEM
+	LD	DE,CPYRHT
+	CALL	SYSTEM
+	LD	A,(FCB+17)
+	LD	(SYMFLG),A	;Save symbol table request flag
+	LD	HL,FCB+9	;Point to file extension
+	LD	A,(HL)		;Get source drive letter
+	CALL	CHKDSK		;Valid drive?
+	OR	A
+	JR	Z,DEFAULT	;If no extension, use existing drive spec
+	LD	(FCB),A
+DEFAULT:
+	INC	HL
+	LD	A,(HL)		;Get HEX file drive letter
+	CP	'Z'		;Suppress HEX file?
+	CALL	NZ,CHKDSK
+	LD	(HEXFCB),A
+	INC	HL
+	LD	A,(HL)		;Get PRN file drive letter
+	CP	'Z'		;Suppress PRN file?
+	JR	Z,NOPRN
+	CP	'X'		;PRN file to console?
+	CALL	NZ,CHKDSK
+NOPRN:
+	LD	(LSTFCB),A
+	CALL	ADDEXT
+	LD	DE,FCB
+	LD	C,OPEN
+	CALL	SYSTEM
+	LD	HL,NOFILE
+	INC	A
+	JP	Z,PRERR
+	XOR	A
+	LD	(FCB+32),A	;Zero Next Record field
+	LD	DE,HEXFCB
+	CALL	MAKFIL
+	LD	DE,LSTFCB
+	CALL	MAKFIL
+	LD	HL,0FFH
+	EXX
+	LD	HL,START+1	;POINTER TO NEXT BYTE OF INTERMEDIATE CODE
+	LD	(CODE),HL
+	LD	IY,START	;POINTER TO CURRENT RELOCATION BYTE
+	LD	HL,0
+	LD	(PC),HL		;DEFAULT PROGRAM COUNTER
+	LD	(BASE),HL	;POINTER TO ROOT OF ID TREE=NIL
+	LD	(RETPT),HL	;Pointer to last RET record
+	DEC	HL
+	LD	(LSTRET),HL	;Location of last RET
+	LD	HL,(6)		;HL=END OF MEMORY
+	LD	(HEAP),HL	;BACK END OF SYMBOL TABLE SPACE
+	LD	A,4
+	LD	(BCOUNT),A	;CODE BYTES PER RELOCATION BYTE
+	XOR	A
+	LD	(IFFLG),A	;NOT WITHIN IF/ENDIF
+	LD	(CHKLAB),A	;LOOKUP ALL LABELS
+
+;Assemble each line of code
+
+LOOP:
+	CALL	NEXTCHR		;Get first character on line
+	CP	1AH
+	JP	Z,END
+	LD	A,-1		;Flag that no tokens have been read yet
+	LD	(SYM),A
+	CALL	ASMLIN		;Assemble the line
+	LD	A,(SYM)
+	CP	-1		;Any tokens found on line?
+	CALL	Z,GETSYM	;If no tokens read yet, read first one
+	CP	';'
+	JR	Z,ENDLN
+	CP	EOL
+	JR	Z,ENDLN
+	LD	A,14H		;Garbage at end of line error
+	JR	ENDLIN
+	JP	END
+
+ENDLN:
+	XOR	A		;Flag no errors on line
+ENDLIN:
+;AL = error code for line. Stack depth unknown
+	LD	SP,STACK
+	CALL	NEXLIN
+	JR	LOOP
+
+NEXLIN:
+	LD	B,0C0H		;Put end of line marker and error code (AL)
+	CALL	PUTCD
+	CALL	GEN1
+	LD	A,(CHR)
+GETEOL:
+	CP	10
+	RET	Z
+	CP	1AH
+	JP	Z,END
+	CALL	NEXTCHR		;Scan over comments for linefeed
+	JR	GETEOL
+
+ABORT:
+	LD	HL,NOMEM
+PRERR:
+	EX	DE,HL
+	LD	C,PRINTMES
+	CALL	SYSTEM
+	JP	0
+
+MAKFIL:
+	LD	A,(DE)		;Get drive select byte
+	CP	20H		;If not valid, don't make file
+	RET	NC
+	PUSH	DE
+	INC	DE
+	LD	HL,FCB+1
+	LD	BC,8
+	LDIR			;Copy source file name
+	POP	DE
+	LD	C,DELETE
+	CALL	SYSTEM
+	LD	C,MAKE
+	CALL	SYSTEM
+	LD	HL,NOSPAC
+	INC	A		;Success?
+	JR	Z,PRERR
+	LD	C,OPEN
+	JP	SYSTEM
+
+ADDEXT:
+	LD	DE,FCB+9
+	LD	HL,EXTEND	;Set extension to ASM
+	LD	BC,7
+	LDIR
+	RET
+
+CHKDSK:
+	SUB	' '		;If not present, set zero flag
+	RET	Z
+	SUB	20H
+	JR	Z,DSKERR	;Must be in range A-W
+	CP	'X'-'@'
+	RET	C
+DSKERR:
+	LD	HL,BADDSK
+	JR	PRERR
+
+ERROR:
+	LD	A,C
+	JR	ENDLIN
+
+NEXTCHR:
+	EXX
+	INC	L
+	JR	NZ,GETCH
+;Buffer empty so refill it
+	LD	DE,80H
+	LD	C,SETDMA
+	CALL	SYSTEM
+	EX	DE,HL
+	LD	DE,FCB
+	LD	C,READ
+	CALL	SYSTEM
+	OR	A
+	LD	A,1AH		;Possibly signal End of File
+	JR	NZ,NOMOD	;If nothing read
+GETCH:
+	LD	A,(HL)
+NOMOD:
+	EXX
+	LD	(CHR),A
+	RET
+
+
+MROPS:
+
+; Get two operands and check for certain types, according to flag byte
+; in CL. OP code in CH. Returns only if immediate operation.
+
+	PUSH	BC		;Save type flags
+	CALL	GETOP
+	PUSH	DE		;Save first operand
+	CALL	GETOP2
+	POP	HL		;First op in BX, second op in DX
+	LD	A,SREG		;Check for a segment register
+	CP	H
+	JR	Z,SEGCHK
+	CP	D
+	JR	Z,SEGCHK
+	LD	A,CONST		;Check if the first operand is immediate
+	LD	C,26
+	CP	H
+	JR	Z,ERROR		;Error if so
+	POP	BC		;Restore type flags
+	CP	D		;If second operand is immediate, then done
+	RET	Z
+	LD	A,UNDEFID	;Check for memory reference
+	CP	H
+	JR	Z,STORE		;Is destination memory?
+	CP	D
+	JR	Z,LOAD		;Is source memory?
+	BIT	0,C		;Check if register-to-register operation OK
+	LD	C,27
+	JR	Z,ERROR
+	LD	A,D
+	CP	H		;Registers must be of same length
+RR:
+	LD	C,22
+	JR	NZ,ERROR
+RR1:
+	AND	1		;Get register length (1=16 bits)
+	OR	B		;Or in to OP code
+	CALL	PUT		;And write it
+	POP	BC		;Dump return address
+	LD	A,L
+	ADD	A,A		;Rotate register number into middle position
+	ADD	A,A
+	ADD	A,A
+	OR	0C0H		;Set register-to-register mode
+	OR	E		;Combine with other register number
+	JP	PUT
+
+SEGCHK:
+;Come here if at least one operand is a segment register
+	POP	BC		;Restore flags
+	BIT	3,C		;Check if segment register OK
+	LD	C,22
+	JR	Z,ERROR
+	LD	BC,8E03H	;Segment register move OP code
+	LD	A,UNDEFID
+	CP	D		;Check if source is memory
+	JR	Z,LOAD
+	CP	H		;Check if destination is memory
+	JR	Z,STORE
+	LD	A,XREG
+	SUB	D		;Check if source is 16-bit register
+	JR	Z,RR		;If so, AL must be zero
+	RES	1,B		;Change direction
+	EX	DE,HL		;Flip which operand is first and second
+	LD	A,XREG
+	SUB	D		;Let RR perform finish the test
+	JR	RR
+
+STORE:
+	BIT	2,C		;Check if storing is OK
+	JR	NZ,STERR
+	EX	DE,HL		;If so, flip operands
+	RES	1,B		;   and zero direction bit
+LOAD:
+	LD	D,25
+	CP	H		;Check if memory-to-memory
+	JR	Z,MRERR
+	LD	A,H
+	CP	REG		;Check if 8-bit operation
+	JR	NZ,XRG
+	LD	D,22
+	BIT	0,C		;See if 8-bit operation is OK
+	JR	Z,MRERR
+XRG:
+	LD	A,E
+	SUB	6		;Check for R/M mode 6 and register 0
+	OR	L		;   meaning direct load/store of accumulator
+	JR	NZ,NOTAC
+	BIT	3,C		;See if direct load/store of accumulator
+	JR	Z,NOTAC		;   means anything in this case
+; Process direct load/store of accumulator
+	LD	A,B
+	AND	2		;Preserve direction bit only
+	XOR	2		;   but flip it
+	OR	0A0H		;Combine with OP code
+	LD	B,A
+	LD	A,H		;Check byte/word operation
+	AND	1
+	OR	B
+	POP	BC		;Dump return address
+	JP	PUTADD		;Write the address
+
+NOTAC:
+	LD	A,H
+	AND	1		;Get byte/word bit
+	AND	C		;But don't use it in word-only operations
+	OR	B		;Combine with OP code
+	CALL	PUT
+	LD	A,L
+	ADD	A,A		;Rotate to middle position
+	ADD	A,A
+	ADD	A,A
+	OR	E		;Combine register field
+	POP	BC		;Dump return address
+	JP	PUTADD		;Write the address
+
+STERR:
+	LD	D,29
+MRERR:
+	LD	C,D
+	JP	ERROR
+
+GETOP2:
+;Get the second operand: look for a comma and drop into GETOP
+	LD	A,(SYM)
+	CP	','
+	LD	C,21
+	JP	NZ,ERROR
+
+
+GETOP:
+
+; Get one operand. Operand may be a memory reference in brackets, a register,
+; or a constant. If a flag (such as "B" for byte operation) is encountered,
+; it is noted and processing continues to find the operand.
+;
+; On exit, AL (=DH) has the type of operand. Other information depends
+; on the actual operand:
+;
+; AL=DH=0  Memory Reference.  DL has the address mode properly prepared in
+; the 8086 R/M format (middle bits zero). The constant part of the address
+; is in ADDR. If an undefined label needs to be added to this, a pointer to
+; its information fields is in ALABEL, otherwise ALABEL is zero.
+;
+; AL=DH=1  Value. The constant part is in DATA. If an undefined label needs
+; to be added to this, a pointer to its information fields is in DLABEL,
+; otherwise DLABEL is zero. "$" and "RET" are in this class.
+;
+; AL=DH=2  8-bit Register. DL has the register number.
+;
+; AL=DH=3  16-bit Register. DL has the register number.
+;
+; AL=DH=4  Segment Register. DL has the register number.
+
+	CALL	GETSYM
+GETOP1:
+;Enter here if we don't need a GETSYM first
+	CP	'['		;Memory reference?
+	JR	Z,MEM
+	CP	5		;Flag ("B", "W", etc.)?
+	JR	Z,FLG
+	CP	REG		;8-Bit register?
+	JR	Z,NREG
+	CP	XREG		;16-Bit register?
+	JR	Z,NREG
+	CP	SREG		;Segment register?
+	JR	Z,NREG
+VAL:				;Must be immediate
+	XOR	A		;No addressing modes allowed
+VAL1:
+	CALL	GETVAL
+	LD	HL,(CON)	;Defined part
+	LD	(DATA),HL
+	LD	HL,(UNDEF)	;Undefined part
+	LD	(DLABEL),HL
+	LD	E,B
+	LD	D,CONST
+	LD	A,D
+	RET
+NREG:
+	PUSH	DE
+	CALL	GETSYM
+	POP	DE
+	LD	A,D
+	RET
+MEM:
+	CALL	GETSYM
+	LD	A,1
+	CALL	GETVAL
+	LD	A,(SYM)
+	CP	']'
+	LD	C,24
+	JP	NZ,ERROR
+	CALL	GETSYM
+	LD	HL,(CON)
+	LD	(ADDR),HL
+	LD	HL,(UNDEF)
+	LD	(ALABEL),HL
+	LD	E,B
+	LD	D,UNDEFID
+	LD	A,D
+	RET
+FLG:
+	CALL	GETSYM
+	CP	','
+	JR	Z,GETOP
+	JR	GETOP1
+
+
+GETVAL:
+
+; Expression analyzer. On entry, if AL=0 then do not allow base or index
+; registers. If AL=1, we are analyzing a memory reference, so allow base
+; and index registers, and compute addressing mode when done. The constant
+; part of the expression will be found in CON. If an undefined label is to
+; be added to this, a pointer to its information fields will be found in
+; UNDEF.
+
+	EX	AF,AF'
+	PUSH	HL
+	LD	HL,0
+	LD	(CON),HL
+	LD	(UNDEF),HL
+	POP	HL
+	LD	A,(SYM)
+	CP	'+'
+	JR	Z,PLSMNS
+	CP	'-'
+	JR	Z,PLSMNS
+	LD	B,'+'
+	PUSH	BC
+	JR	L045C
+PLSMNS:
+	PUSH	AF
+	EX	AF,AF'
+	SET	2,A		;Flag that a sign was found
+	EX	AF,AF'
+	CALL	GETSYM
+L045C:
+	CP	1
+	JR	NZ,L0463
+	JP	L0578
+L0463:
+	CP	0
+	JR	NZ,L046A
+	JP	L0597
+L046A:
+	CP	'"'
+	JR	NZ,L0471
+L046E:
+	JP	L0648
+L0471:
+	CP	'''
+	JR	Z,L046E
+	CP	3
+	LD	C,14H
+	JP	NZ,ERROR
+	EX	AF,AF'
+	BIT	0,A
+	LD	C,1
+	JP	Z,ERROR
+	EX	AF,AF'
+	LD	A,E
+	LD	C,3
+	CP	3
+	JR	Z,L04C6
+	SUB	5
+	JR	Z,L04D7
+	DEC	A
+	LD	C,4
+	JR	Z,L04B5
+	DEC	A
+	JR	Z,L04A6
+	LD	C,2
+	JP	ERROR
+L04A6:
+	EX	AF,AF'
+	BIT	4,A
+	JP	NZ,ERROR
+	OR	30H
+	JR	L04E4
+L04B5:
+	EX	AF,AF'
+	BIT	4,A
+	JP	NZ,ERROR
+	SET	4,A
+	JR	L04E4
+L04C6:
+	EX	AF,AF'
+	BIT	7,A
+	JP	NZ,ERROR
+	SET	7,A
+	JR	L04E4
+L04D7:
+	EX	AF,AF'
+	BIT	7,A
+	JP	NZ,ERROR
+	OR	0C0H
+L04E4:
+	EX	AF,AF'
+	POP	AF
+	CP	'-'
+	LD	C,5
+	JP	Z,ERROR
+L04F1:
+	EX	AF,AF'
+	SET	2,A
+	EX	AF,AF'
+	CALL	GETSYM
+	CP	'+'
+	JR	NZ,L0505
+L0502:
+	JP	PLSMNS
+L0505:
+	CP	'-'
+	JR	Z,L0502
+	EX	AF,AF'
+	LD	B,0
+	BIT	4,A
+	RLA
+	JR	Z,NOIND
+	CCF
+	RL	B
+	RLA
+	RL	B
+	RLA
+	RL	B
+L0523:
+	LD	HL,(UNDEF)
+	LD	A,H
+	OR	L
+	SET	7,B
+	RET	NZ
+	LD	HL,(CON)
+	CALL	L055B
+	RET	NZ
+	RES	7,B
+	SET	6,B
+	LD	A,H
+	OR	L
+	RET	NZ
+	LD	A,B
+	AND	7
+	LD	B,A
+	CP	6
+	RET	NZ
+	SET	6,B
+	RET
+
+L055B:
+	LD	A,H
+	OR	A
+	JR	Z,L0565
+	INC	A
+	RET	NZ
+L0565:
+	LD	A,L
+	XOR	H
+	AND	80H
+	RET
+
+NOIND:
+	LD	B,6
+	RET	NC
+	RLA
+	JR	C,L0523
+	INC	B
+	JR	L0523
+
+L0578:
+	LD	HL,(CON)
+	POP	AF
+	CP	'-'
+	JR	NZ,L058D
+	SBC	HL,DE
+L0586:
+	LD	(CON),HL
+	JR	L04F1
+L058D:
+	ADD	HL,DE
+	JR	L0586
+
+L0597:
+	EX	AF,AF'
+	LD	C,6
+	BIT	3,A
+	JR	NZ,L05B5
+	SET	3,A
+	EX	AF,AF'
+	LD	(UNDEF),HL
+	POP	AF
+	CP	'+'
+	LD	C,5
+L05B5:
+	JP	NZ,ERROR
+	JR	L04F1
+
+
+GETSYM:
+
+; The lexical scanner. Used only in the operand field. Returns with the token
+; in SYM and AL, sometimes with additional info in BX or DX.
+;
+; AL=SYM=0  Undefined label. BX has pointer to information fields.
+;
+; AL=SYM=1  Constant (or defined label). DX has value.
+;
+; AL=SYM=2,3,4  8-bit register, 16-bit register, or segment register,
+; respectively. DL has register number.
+;
+; AL=SYM=5  A mode flag (such as "B" for byte operation). Type of flag in DL
+; and also stored in FLAG: -1=no flags, 0=B, 1=W, 2=S, 3=L, 4=T.
+;
+; AL=SYM=6  8087 floating point register, ST(n) or ST. DL has register number.
+;
+; All other values are the ASCII code of the character. Note that this may
+; never be a letter or number.
+
+	CALL	GETSY
+	LD	A,(SYM)
+	RET
+
+SCANB:
+	LD	A,(CHR)
+SCANT:
+	CP	' '
+	JR	Z,NEXB
+	CP	9
+	RET	NZ
+NEXB:
+	CALL	NEXTCHR
+	JR	SCANT
+
+DOLLAR:
+	LD	DE,(OLDPC)
+	LD	A,CONST
+	LD	(SYM),A
+	JP	NEXTCHR
+
+GETSY:
+	CALL	SCANB
+	CP	'$'
+	JR	Z,DOLLAR
+	LD	(SYM),A
+	OR	20H
+	CP	'z'+1
+	JP	NC,NEXTCHR
+	CP	'a'
+	JP	NC,LETTER
+	CP	'9'+1
+	JP	NC,NEXTCHR
+	CP	'0'
+	JP	C,NEXTCHR
+	LD	HL,SYM
+	LD	(HL),CONST
+	CALL	READID
+	DEC	HL
+	LD	A,(HL)
+	LD	C,7
+	LD	HL,0
+	CP	'h'
+	JR	Z,HEX
+	INC	C
+	LD	IX,ID
+DEC:
+	LD	A,(IX)
+	INC	IX
+	CP	'9'+1
+	JP	NC,ERROR
+	SUB	'0'
+	LD	D,H
+	LD	E,L
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,DE
+	ADD	HL,HL
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	DJNZ	DEC
+	EX	DE,HL
+	RET
+
+L0648:
+	LD	B,A
+	LD	A,(CHR)
+	CP	B
+	LD	C,'#'
+	LD	E,A
+	LD	D,0
+	CALL	Z,L0690
+	CALL	L0698
+	EX	AF,AF'
+	LD	C,'%'
+	BIT	1,A
+	JP	Z,ERROR
+	BIT	2,A
+	LD	C,'&'
+	JP	NZ,ERROR
+	EX	AF,AF'
+L066F:
+	LD	A,E
+	CP	13
+	LD	C,'''
+	JP	Z,ERROR
+	CALL	PUT
+	LD	A,(DATSIZ)
+	OR	A
+	JR	NZ,L0686
+	LD	A,D
+	CALL	PUT
+L0686:
+	LD	A,(CHR)
+	LD	E,A
+	CALL	L0698
+	JR	L066F
+
+L0690:
+	CALL	NEXTCHR
+	CP	B
+	JP	NZ,ERROR
+	RET
+
+L0698:
+	CALL	NEXTCHR
+	CP	B
+	RET	NZ
+	CALL	NEXTCHR
+	CP	B
+	RET	Z
+	POP	HL
+	JP	L0578
+
+HEX:
+	LD	DE,ID
+	DEC	B
+HEX1:
+	LD	A,(DE)
+	INC	DE
+	SUB	'0'
+	CP	10
+	JR	C,GOTIT
+	CP	'g'-'0'
+	JP	NC,ERROR
+	SUB	'a'-10-'0'
+GOTIT:
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	A,L
+	LD	L,A
+	DJNZ	HEX1
+	EX	DE,HL
+	RET
+
+	JP	ERROR
+
+GETLET:
+	CALL	SCANB
+	CP	EOL
+	SCF
+	RET	Z
+	CP	';'
+	SCF
+	RET	Z
+	LD	C,10
+	OR	20H
+	CP	'a'
+	JP	C,ERROR
+	CP	'z'+1
+	JP	NC,ERROR
+READID:
+	LD	HL,ID
+	LD	B,0
+MOREID:
+	LD	(HL),A
+	INC	B
+	INC	HL
+	CALL	NEXTCHR
+	CP	'0'
+	JR	C,NOMORE
+	OR	20H
+	CP	'z'+1
+	JR	NC,NOMORE
+	CP	'9'+1
+	JR	C,MOREID
+	CP	'a'
+	JR	NC,MOREID
+NOMORE:
+	LD	C,A
+	LD	A,B
+	LD	(LENID),A
+	OR	A
+	LD	A,C
+	RET
+
+LETTER:
+	CALL	READID
+	LD	A,B
+	DEC	A
+	JR	NZ,NOFLG
+	LD	A,(ID)
+	CP	'l'
+	LD	C,0
+	LD	DE,L1A98
+	JR	Z,SAVFLG
+	CP	'b'
+	LD	DE,FLAG
+	JR	Z,SAVFLG
+	CP	'w'
+	LD	C,1
+	JR	Z,SAVFLG
+	XOR	A
+NOFLG:
+	DEC	A
+	PUSH	HL
+	CALL	Z,REGCHK
+	POP	HL
+	LD	A,D
+	CALL	NZ,LOOKRET
+SYMSAV:
+	LD	(SYM),A
+	RET
+
+SAVFLG:
+	EX	DE,HL
+	LD	A,(HL)
+	INC	A
+	LD	(HL),C
+	LD	C,32
+	JR	Z,L0760
+	JP	ERROR
+L0760:
+	LD	A,5
+	JR	SYMSAV
+
+REGCHK:
+	LD	HL,ID
+	LD	C,(HL)
+	INC	HL
+	LD	A,(HL)
+	LD	HL,REGTAB
+	LD	D,XREG
+	LD	E,0
+	CP	'x'
+	JR	Z,SCANREG
+	LD	D,REG
+	CP	'l'
+	JR	Z,SCANREG
+	LD	E,4
+	CP	'h'
+	JR	Z,SCANREG
+	LD	D,SREG
+	LD	E,0
+	LD	HL,SEGTAB
+	CP	's'
+	JR	Z,SCANREG
+	LD	D,XREG
+	CP	'p'
+	JR	Z,PREG
+	CP	'i'
+	RET	NZ
+	LD	E,6
+	LD	A,C
+	CP	's'
+	RET	Z
+	INC	E
+	CP	'd'
+	RET
+PREG:
+	LD	E,4
+	LD	A,C
+	CP	's'
+	RET	Z
+	INC	E
+	CP	'b'
+	RET
+SCANREG:
+	LD	A,C
+	LD	BC,4
+	CPIR
+	RET	NZ
+	LD	A,C
+	ADD	A,E
+	LD	E,A
+	XOR	A
+	RET
+
+REGTAB:	DB	'bdca'
+
+SEGTAB:	DB	'dsce'
+
+LOOK:
+	LD	B,(HL)
+	INC	HL
+	LD	DE,ID
+	CALL	CPSLP
+	RET	Z
+	XOR	80H
+	LD	C,A
+	DEC	HL
+	LD	A,(HL)
+	XOR	80H
+	CP	C
+	JR	NC,SMALL
+	INC	B
+	INC	B
+SMALL:
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	A,D
+	OR	E
+	SCF
+	RET	Z
+	EX	DE,HL
+	JR	LOOK
+
+LOOKRET:
+	LD	A,B
+	CP	3		;RET has 3 letters
+	JR	NZ,LOOKUP
+	DEC	HL
+	SET	7,(HL)
+	LD	DE,RETSTR+2
+CHKRET:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,LOOKIT
+	DEC	HL
+	DEC	DE
+	DJNZ	CHKRET
+	LD	DE,(LSTRET)
+	LD	A,E
+	AND	D
+	INC	A
+	JR	Z,ALLRET
+	LD	HL,(PC)
+	SBC	HL,DE
+	CALL	L055B
+	LD	A,1
+	RET	Z
+ALLRET:
+	LD	HL,(RETPT)
+	LD	A,H
+	OR	L
+	LD	A,0
+	RET	NZ
+	LD	HL,(HEAP)
+	DEC	HL
+	DEC	HL
+	DEC	HL
+	LD	(HEAP),HL
+	XOR	A
+	LD	(HL),A
+	LD	(RETPT),HL
+	RET
+
+LOOKUP:
+	DEC	HL
+	SET	7,(HL)
+LOOKIT:
+	LD	HL,(BASE)
+	LD	A,H
+	OR	L
+	JR	Z,EMPTY
+	CALL	LOOK
+	JR	C,ENTER
+	LD	DE,4
+	ADD	HL,DE
+	LD	A,(HL)
+	OR	A
+	RET	Z
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	RET
+
+ENTER:
+	PUSH	HL		;Save pointer to link field
+	CALL	CREATE		;Add the node
+	EX	(SP),HL
+	LD	(HL),D		;Link new node
+	DEC	HL
+	LD	(HL),E
+	POP	HL
+	RET			;Zero was set by CREATE
+
+EMPTY:
+	CALL	CREATE
+	LD	(BASE),DE
+	RET
+
+
+CREATE:
+
+; Add a new node to the identifier tree. The identifier is at ID with
+; bit 7 of the last character set to one. The length of the identifier is
+; in LENID, which is ID-1.
+;
+; Node format:
+;	1. Length of identifier (1 byte)
+;	2. Identifier (1-80 bytes)
+;	3. Left link (2-byte pointer to alphabetically smaller identifiers)
+;	4. Right link (0 if none larger)
+;	5. Data field:
+;	   a. Defined flag (0=undefined, 1=defined)
+;	   b. Value (2 bytes)
+;
+; This routine returns with AL=zero and zero flag set (which indicates
+; on return from LOOKUP that it has not yet been defined), DX points
+; to start of new node, and BX points to data field of new node.
+
+	LD	A,(LENID)
+	ADD	A,8		;Storage needed for the node
+	LD	HL,(HEAP)
+	LD	E,A
+	LD	D,0
+	SBC	HL,DE		;Heap grows downward
+	LD	(HEAP),HL
+	EX	DE,HL
+	LD	HL,(CODE)	;Check to make sure there's enough
+	SBC	HL,DE
+	JP	NC,ABORT
+	PUSH	DE
+	LD	HL,LENID
+	LD	C,(HL)
+	INC	C
+	LD	B,0
+	LDIR			;Move identifier and length into node
+	LD	B,4
+	EX	DE,HL
+NILIFY:
+	LD	(HL),C		;Zero left and right links
+	INC	HL
+	DJNZ	NILIFY
+	XOR	A		;Set zero flag
+	LD	(HL),A		;Zero defined flag
+	POP	DE		;Restore pointer to node
+	RET
+
+CPSLP:
+	LD	A,(DE)
+	CP	(HL)
+	INC	DE
+	INC	HL
+	RET	NZ
+	DJNZ	CPSLP
+	RET
+
+GETLAB:
+	LD	HL,0
+	LD	(LABPT),HL
+	LD	A,-1
+	LD	(FLAG),A
+	LD	(L1A98),A
+	LD	D,0
+	LD	A,(CHR)
+	CP	' '+1
+	JR	C,NOT1
+	SET	0,D
+NOT1:
+	CALL	GETLET
+	RET	C
+	CP	':'
+	JR	NZ,LABCHK
+	CALL	NEXTCHR
+	JR	LABEL
+LABCHK:
+	OR	A
+	BIT	0,D
+	RET	Z
+LABEL:
+	LD	A,(CHKLAB)
+	OR	A
+	JP	NZ,GETLET
+	CALL	LOOKUP
+	LD	C,11
+	JP	NZ,ERROR
+	LD	DE,(PC)
+	LD	(HL),1
+	INC	HL
+	LD	(HL),E
+	LD	(LABPT),HL
+	INC	HL
+	LD	(HL),D
+	JP	GETLET
+
+	JP	ERROR
+
+ASMLIN:
+	LD	HL,(PC)
+	LD	(OLDPC),HL
+	CALL	GETLAB
+	JP	C,ENDLN
+	LD	HL,LENID
+	LD	A,(HL)
+	LD	C,12
+	SUB	2
+	LD	B,A
+	JP	C,ERROR
+	CP	5
+	JP	NC,ERROR
+	INC	HL
+	LD	A,(HL)
+	SUB	'a'
+	LD	C,A
+	ADD	A,A
+	ADD	A,A
+	ADD	A,C
+	ADD	A,B
+	ADD	A,A
+	LD	HL,OPTAB
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	INC	B
+	LD	C,B
+	LD	A,(HL)
+	INC	HL
+	OR	A
+	JR	Z,OPERR
+FINDOP:
+	LD	B,C
+	EX	AF,AF'		;Save count of opcodes in BP
+	LD	DE,ID+1
+	CALL	CPSLP
+	JR	Z,HAVOP
+	LD	D,0
+	LD	E,B
+	INC	E
+	INC	E
+	ADD	HL,DE
+	EX	AF,AF'
+	DEC	A
+	JR	NZ,FINDOP
+OPERR:
+	LD	C,12
+	JP	ERROR
+
+HAVOP:
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,(HL)		;Get opcode
+	EX	DE,HL
+	JP	(HL)
+
+GRP1:
+	LD	BC,8A09H
+	CALL	MROPS
+	LD	BC,0C6H
+	LD	A,H
+	CP	UNDEFID
+	CALL	Z,STIMM
+	AND	1
+	JR	Z,BYTIMM
+	LD	A,0B8H
+	OR	L
+	CALL	PUT
+	JP	PUTWOR
+
+BYTIMM:
+	LD	A,0B0H
+	OR	L
+	CALL	PUT
+	JP	PUTBYT
+
+IMMED:
+	LD	A,H
+	CP	UNDEFID
+	JR	Z,STIMM
+	LD	A,L
+	OR	A
+	RET	Z
+	LD	A,H
+	CALL	IMM
+	OR	0C0H
+	CALL	PUT
+FINIMM:
+	LD	A,C
+	POP	BC
+	BIT	0,A
+	JR	Z,PUTBYT
+	CP	83H
+	JR	Z,PUTBYT
+	JR	PUTWOR
+
+STIMM:
+	LD	A,(FLAG)
+	CALL	IMM
+	CALL	PUTADD
+	JR	FINIMM
+
+IMM:
+	AND	1
+	OR	C
+	LD	C,A
+	CALL	PUT
+	LD	A,B
+	AND	38H
+	OR	L
+	RET
+
+PUT:
+;Save byte in AL as pure code, with intermediate code bits 00. AL and
+;DI destroyed, no other registers affected.
+	PUSH	HL
+	PUSH	BC
+	LD	B,0		;Flag as pure code
+	CALL	GEN
+	POP	BC
+	POP	HL
+	RET
+
+GEN:
+;Save byte of code in AL, given intermediate code bits in bits 7&8 of CH.
+	CALL	PUTINC		;Save it and bump code pointer
+GEN1:
+	LD	A,(RELOC)
+	RL	B
+	RLA
+	RL	B
+	RLA
+	LD	(RELOC),A
+	LD	HL,BCOUNT
+	DEC	(HL)
+	RET	NZ
+	LD	(HL),4
+	LD	HL,RELOC
+	LD	A,(HL)
+	LD	(HL),0
+	LD	(IY),A
+	LD	HL,(CODE)
+	PUSH	HL
+	POP	IY
+	INC	HL
+	LD	(CODE),HL
+	RET
+
+PUTINC:
+	PUSH	HL
+	LD	HL,(PC)
+	INC	HL
+	LD	(PC),HL
+	JR	PUTCD1
+PUTCD:
+	PUSH	HL
+PUTCD1:	LD	HL,(CODE)
+	LD	(HL),A
+	INC	HL
+	LD	(CODE),HL
+	POP	HL
+	RET
+
+PUTWOR:
+;Save the word value described by [DLABEL] and [DATA] as code. If defined,
+;two bytes of pure code will be produced. Otherwise, appropriate intermediate
+;code will be generated.
+	PUSH	BC
+	LD	B,80H
+	PUSH	DE
+	PUSH	HL
+	JR	PUTBW
+
+PUTBYT:
+;Same as PUTWOR, above, but for byte value.
+	PUSH	BC
+	LD	B,40H
+	PUSH	DE
+	PUSH	HL
+	LD	HL,(DLABEL)
+	LD	A,H
+	OR	L
+	JR	NZ,PUTBW
+	LD	HL,(DATA)
+	OR	H
+	JR	Z,PUTBW
+	INC	H
+	JR	Z,PUTBW
+	LD	C,31
+	JP	ERROR
+PUTBW:
+	LD	DE,(DLABEL)
+	LD	HL,(DATA)
+PUTCHK:
+	LD	A,D
+	OR	E
+	JR	Z,NOUNDEF
+	LD	A,E
+	CALL	PUTCD
+	LD	A,D
+	CALL	PUTCD
+	LD	A,L
+	CALL	PUTINC
+	LD	A,H
+	BIT	7,B
+	JR	Z,SMPUT
+	CALL	GEN
+	JR	PRET
+SMPUT:
+	CALL	PUTCD
+	CALL	GEN1
+PRET:
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+NOUNDEF:
+	LD	A,L
+	LD	C,H
+	PUSH	BC
+	LD	B,0
+	CALL	GEN
+	POP	BC
+	LD	A,C
+	BIT	7,B
+	LD	B,0
+	CALL	NZ,GEN
+	JR	PRET
+
+PUTADD:
+;Save complete addressing mode. Addressing mode is in AL; if this is a register
+;operation (>=C0), then the one byte will be saved as pure code. Otherwise,
+;the details of the addressing mode will be investigated and the optional one-
+;or two-byte displacement will be added, as described by [ADDR] and [ALABEL].
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	B,0
+	LD	C,A
+	CALL	GEN		;Save the addressing mode as pure code
+	LD	A,C
+	LD	B,80H
+	AND	0C7H
+	CP	6
+	JR	Z,TWOBT		;Direct address?
+	AND	0C0H
+	JR	Z,PRET		;Indirect through reg, no displacement?
+	CP	0C0H
+	JR	Z,PRET		;Register to register operation?
+	LD	B,A		;Save whether one- or two-byte displacement
+TWOBT:
+	LD	HL,(ADDR)
+	LD	DE,(ALABEL)
+	JR	PUTCHK
+
+GRP2:
+	CALL	GETOP
+	LD	BC,0FF30H
+	CP	UNDEFID
+	JR	Z,PMEM
+	LD	B,50H
+	CP	XREG
+	JR	Z,PXREG
+	LD	B,6
+	CP	SREG
+	JP	Z,PACKREG
+	LD	C,20
+	JP	ERROR
+
+PMEM:
+	LD	A,B
+	CALL	PUT
+	LD	A,C
+	OR	E
+	JR	PUTADD
+
+PXREG:
+	LD	A,B
+	OR	E
+	JP	PUT
+
+GRP3:
+	CALL	GETOP
+	PUSH	DE
+	CALL	GETOP2
+	POP	HL
+	LD	BC,8614H
+	LD	A,SREG
+	CP	H
+	JP	Z,ERROR
+	CP	D
+	JP	Z,ERROR
+	LD	A,CONST
+	CP	H
+	JP	Z,ERROR
+	CP	D
+	JP	Z,ERROR
+	LD	A,UNDEFID
+	CP	H
+	JR	Z,EXMEM
+	CP	D
+	JR	Z,EXMEM1
+	LD	A,H
+	CP	D
+	LD	C,22
+	JP	NZ,ERROR
+	CP	XREG
+	CALL	NZ,RR1	;RR1 never returns
+	LD	A,L
+	OR	A
+	JR	Z,EXACC
+	EX	DE,HL
+	LD	A,L
+	OR	A
+	LD	A,H
+	CALL	NZ,RR1
+EXACC:
+	LD	A,90H
+	OR	E
+	JP	PUT
+
+EXMEM:
+	EX	DE,HL
+EXMEM1:
+	CP	H
+	JP	Z,ERROR
+	LD	C,1	;Flag word as OK
+	CALL	NOTAC	;NOTAC never returns
+	JP	ERROR
+
+GRP4:
+	PUSH	AF
+	CALL	GETOP
+	POP	BC
+	CP	CONST
+	JR	Z,FIXED
+	SUB	XREG
+	DEC	E
+	DEC	E
+	OR	E
+	LD	C,20
+	JP	NZ,ERROR
+	LD	A,B
+	OR	8
+	JP	PUT
+FIXED:
+	LD	A,B
+	CALL	PUT
+	JP	PUTBYT
+
+GRP5:
+	PUSH	AF
+	CALL	GETOP
+	CP	CONST
+	JP	NZ,ERROR
+	LD	HL,(DLABEL)
+	LD	A,H
+	OR	L
+	LD	C,30
+	JP	NZ,ERROR
+	LD	HL,(DATA)
+	POP	AF
+	OR	A
+	JR	Z,ORG
+	DEC	A
+	JR	Z,DSJ
+	DEC	A
+	JR	Z,EQU
+	DEC	A
+	JP	NZ,IF
+PUTOP:
+	LD	A,-3
+	JR	NEWLOC
+ALIGN:
+	LD	A,(PC)
+	AND	1
+	RET	Z
+	LD	HL,1
+DSJ:
+	EX	DE,HL
+	LD	HL,(PC)
+	ADD	HL,DE
+	LD	(PC),HL
+	EX	DE,HL
+	LD	A,-4
+	JR	NEWLOC
+EQU:
+	EX	DE,HL
+	LD	HL,(LABPT)
+	LD	A,H
+	OR	L
+	LD	C,34
+	JP	Z,ERROR
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	RET
+ORG:
+	LD	(PC),HL
+	LD	A,-2
+NEWLOC:
+	CALL	PUTCD
+	LD	A,L
+	CALL	PUTCD
+	LD	A,H
+	CALL	PUTCD
+	LD	B,0C0H
+	JP	GEN1
+GRP6:
+	LD	B,A
+	LD	C,4
+	CALL	MROPS
+	LD	C,23
+	JP	ERROR
+GRP7:
+	LD	B,A
+	LD	C,1
+	CALL	MROPS
+	LD	C,80H
+	LD	DE,(DLABEL)
+	LD	A,D
+	OR	E
+	JP	NZ,ACCIMM
+	EX	DE,HL
+	LD	HL,(DATA)
+	CALL	L055B
+	EX	DE,HL
+	JP	NZ,ACCIMM
+	SET	1,C
+	JP	ACCIMM
+GRP8:
+	LD	C,A
+	LD	B,0FEH
+	JR	ONEOP
+GRP9:
+	LD	C,A
+	LD	B,0F6H
+ONEOP:
+	PUSH	BC
+	CALL	GETOP
+ONE:
+	LD	C,26
+	CP	CONST
+	JP	Z,ERROR
+	CP	SREG
+	LD	C,22
+	JP	Z,ERROR
+	POP	BC
+	CP	UNDEFID
+	JR	Z,MOP
+	AND	1
+	JR	Z,ROP
+	BIT	0,C
+	JR	Z,ROP
+	LD	A,C
+	AND	0F8H
+	OR	E
+	JP	PUT
+MOP:
+	LD	A,(FLAG)
+	AND	1
+	OR	B
+	CALL	PUT
+	LD	A,C
+	AND	38H
+	OR	E
+	JP	PUTADD
+ROP:
+	OR	B
+	CALL	PUT
+	LD	A,C
+	AND	38H
+	OR	0C0H
+	OR	E
+	JP	PUT
+GRP10:
+	LD	C,A
+	LD	B,0F6H
+	PUSH	BC
+	CALL	GETOP
+	LD	C,20
+	LD	A,E
+	OR	A
+	JP	NZ,ERROR
+	LD	A,D
+	CP	XREG
+	JR	Z,G10
+	CP	REG
+	JP	NZ,ERROR
+G10:
+	PUSH	AF
+	CALL	GETOP
+	POP	AF
+	AND	1
+	LD	(FLAG),A
+	LD	A,D
+	JR	ONE
+GRP11:
+	CALL	PUT
+	LD	A,0AH
+	JP	PUT
+GRP12:
+	LD	C,A
+	LD	B,0D0H
+	PUSH	BC
+	CALL	GETOP
+	LD	A,(SYM)
+	CP	','
+	LD	A,D
+	JR	NZ,ONE
+	PUSH	DE
+	CALL	GETOP
+	SUB	REG
+	LD	C,20
+	DEC	E
+	OR	E
+	JP	NZ,ERROR
+	POP	DE
+	LD	A,D
+	POP	BC
+	SET	1,B
+	PUSH	BC
+	JP	ONE
+GRP13:
+	LD	B,A
+	LD	C,1
+	CALL	MROPS
+	LD	C,80H
+ACCIMM:
+	CALL	IMMED
+	SET	2,B
+	RES	1,B
+AIMM:
+	LD	A,H
+	AND	1
+	PUSH	AF
+	OR	B
+	CALL	PUT
+	POP	AF
+	JP	Z,PUTBYT
+	JP	PUTWOR
+
+	JP	ERROR
+
+GRP14:
+;JMP and CALL mnemonics
+	PUSH	AF
+	CALL	GETOP
+	CP	CONST
+	JR	Z,DIRECT
+	LD	C,20
+	CP	REG
+	JP	Z,ERROR
+	CP	SREG
+	JP	Z,ERROR
+	CP	XREG
+	JR	NZ,NOTRG
+	SET	6,E
+	SET	7,E
+NOTRG:
+;Indirect jump. DL has addressing mode.
+	LD	A,0FFH
+	CALL	PUT
+	POP	AF
+	AND	38H
+	OR	E
+	LD	B,A
+	LD	A,(L1A98)
+	OR	A
+	LD	A,B
+	JP	Z,PUTADD	;If so, do inter-segment
+	AND	0F7H		;Convert to intra-segment
+	JP	PUTADD
+DIRECT:
+	LD	A,(SYM)
+	CP	','
+	JR	Z,LONGJ
+	POP	AF
+	DEC	A
+	CP	0E9H
+	JR	Z,GOTOP
+	LD	A,0E8H
+GOTOP:
+	CALL	PUT
+	LD	HL,(DATA)
+	LD	DE,(PC)
+	INC	DE
+	INC	DE
+	OR	A
+	SBC	HL,DE
+	LD	(DATA),HL
+	JP	PUTWOR
+LONGJ:
+	POP	AF
+	CALL	PUT
+	CALL	PUTWOR
+	CALL	GETOP
+	LD	C,20
+	CP	CONST
+	JP	NZ,ERROR
+	JP	PUTWOR
+
+GRP16:
+;RET mnemonic
+	PUSH	AF
+	CALL	GETSYM
+	CP	5
+	JR	Z,LONGR
+	CP	EOL
+	JR	Z,NODEC
+	CP	';'
+	JR	Z,NODEC
+GETSP:
+	CALL	GETOP1
+	POP	BC
+	CP	CONST
+	LD	C,20
+	JP	NZ,ERROR
+	LD	A,B
+	AND	0FEH
+	CALL	PUT
+	JP	PUTWOR
+LONGR:
+	LD	A,(L1A98)
+	OR	A		;Is flag "L"?
+	JR	NZ,NOTLON
+	POP	AF
+	OR	8
+	PUSH	AF
+NOTLON:
+	CALL	GETSYM
+	CP	EOL
+	JR	Z,DORET
+	CP	';'
+	JR	Z,DORET
+	CP	','
+	CALL	Z,GETSYM
+	JR	GETSP
+NODEC:
+;Return is intra-segment (short) without add to SP. 
+;Record position for RET symbol.
+	LD	HL,(PC)
+	LD	(LSTRET),HL
+	EX	DE,HL
+	LD	HL,(RETPT)
+	LD	A,H
+	OR	L
+	JR	Z,DORET
+	LD	(HL),1
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	HL,0
+	LD	(RETPT),HL
+DORET:
+	POP	AF
+	JP	PUT
+
+GRP17:
+	CALL	PUT
+	CALL	GETOP
+	CP	CONST
+	LD	C,20
+	JP	NZ,ERROR
+	LD	HL,(DATA)
+	LD	DE,(PC)
+	INC	DE
+	SBC	HL,DE
+	LD	(DATA),HL
+	CALL	PUTBYT
+	LD	HL,(DLABEL)
+	LD	A,H
+	OR	L
+	RET	NZ
+	LD	HL,(DATA)
+	CALL	L055B
+	RET	Z
+	LD	C,31
+	JP	ERROR
+	RET
+GRP18:
+	CALL	GETOP
+	CP	CONST
+	LD	C,20
+	JP	NZ,ERROR
+	LD	HL,(DLABEL)
+	LD	A,H
+	OR	L
+	JR	NZ,GENINT
+	LD	HL,(DATA)
+	LD	DE,3
+	SBC	HL,DE
+	JR	NZ,GENINT
+	LD	A,0CCH
+	JP	PUT
+GENINT:
+	LD	A,0CDH
+	CALL	PUT
+	JP	PUTBYT
+
+GRP19:	;ESC opcode
+	LD	BC,0D800H
+	JP	ONEOP
+
+GRP20:
+	LD	B,A
+	LD	C,1
+	CALL	MROPS
+	LD	C,0F6H
+	CALL	IMMED
+	LD	B,0A8H
+	JP	AIMM
+GRP21:
+	CALL	GETOP
+	CP	SREG
+	LD	C,28
+	JP	NZ,ERROR
+	LD	B,26H
+PACKREG:
+	LD	A,E
+	ADD	A,A
+	ADD	A,A
+	ADD	A,A
+	OR	B
+	JP	PUT
+GRP22:
+	CALL	GETOP
+	LD	BC,8F00H
+	CP	UNDEFID
+	JP	Z,PMEM
+	LD	B,58H
+	CP	XREG
+	JP	Z,PXREG
+	LD	B,7
+	CP	SREG
+	JR	Z,PACKREG
+	LD	C,20
+	JP	ERROR
+GRP23:
+	LD	(DATSIZ),A
+GETDAT:
+	CALL	GETSYM
+	LD	A,2
+	CALL	VAL1
+	LD	A,(SYM)
+	CP	','
+	LD	A,(DATSIZ)
+	JR	NZ,ENDDAT
+	CALL	SAVDAT
+	JR	GETDAT
+ENDDAT:
+	CP	2
+	JR	NZ,SAVDAT
+	LD	HL,(DATA)
+	SET	7,L
+	LD	(DATA),HL
+SAVDAT:
+	OR	A
+	JP	NZ,PUTBYT
+	JP	PUTWOR
+IF:
+	LD	A,H
+	OR	L
+	LD	A,1
+	JR	Z,SKIPCD
+	LD	(IFFLG),A
+	RET
+
+SKIPCD:
+	LD	(CHKLAB),A
+SKIPLP:
+	XOR	A
+	CALL	NEXLIN
+	CALL	NEXTCHR
+	CP	1AH
+	JR	Z,END
+	CALL	GETLAB
+	JR	C,SKIPLP
+	LD	HL,LENID
+	LD	DE,IFEND
+	LD	B,(HL)
+	INC	B
+	CALL	CPSLP
+	JR	NZ,SKIPLP
+	XOR	A
+	LD	(CHKLAB),A
+	RET
+
+ENDIF:
+	LD	HL,IFFLG
+	LD	A,(HL)
+	LD	(HL),0
+	LD	C,36
+	OR	A
+	JP	Z,ERROR
+	RET
+
+;*********************************************************************
+;	PASS 2
+;*********************************************************************
+
+END:
+	LD	C,4
+WREND:
+	LD	B,0FFH
+	LD	A,B
+	CALL	GEN
+	DEC	C
+	JR	NZ,WREND
+	LD	A,(LSTFCB)
+	CP	'Z'
+	JR	Z,L1033
+	CALL	ADDEXT
+	LD	DE,FCB
+	LD	C,OPEN
+	CALL	SYSTEM
+	LD	HL,0FFH
+	EXX
+L1033:
+	LD	A,-5
+	LD	(HEXCNT),A	;FLAG HEX BUFFER AS EMPTY
+	LD	(L1B0E),A
+	LD	HL,HEXBUF
+	LD	(HEXPNT),HL
+	LD	HL,LSTBUF
+	LD	(LSTPNT),HL
+	LD	HL,0
+	LD	(ERRCNT),HL
+	LD	(PC),HL
+	LD	HL,OBJECT
+	LD	(HEXADD),HL
+	XOR	A
+	LD	(FCB+20H),A	;Set NEXT RECORD field to zero
+	LD	(COUNT),A
+	CALL	STRTLIN
+	LD	HL,START
+L1069:
+	LD	B,4
+	LD	C,(HL)
+	INC	HL
+L1070:
+	RL	C
+	JR	C,L1087
+	RL	C
+	JR	NC,L107B
+	JR	L1108
+L107B:
+	LD	A,(HL)
+L107D:
+	CALL	L13BB
+L1080:
+	INC	HL
+	DJNZ	L1070
+	JR	L1069
+L1087:
+	RL	C
+	JR	C,L108E
+	JP	L1144
+L108E:
+	LD	A,(HL)
+	CP	-10
+	JR	C,L1097
+	JP	L1214
+L1097:
+	PUSH	BC
+	PUSH	HL
+	LD	HL,COUNT
+	LD	A,6
+	SUB	(HL)
+	LD	(HL),0
+	LD	B,A
+	LD	A,' '
+	JR	Z,NOFIL
+BLNK:
+	CALL	LIST
+	CALL	LIST
+	CALL	LIST
+	DJNZ	BLNK
+NOFIL:
+	CALL	OUTLIN
+	POP	HL
+	LD	A,(HL)
+	PUSH	HL
+	CALL	REPERR
+	LD	A,(ERR)
+	CALL	REPERR
+	CALL	STRTLIN
+	POP	HL
+	POP	BC
+	JR	L1080
+
+OUTLIN:
+	CALL	LIST
+	LD	A,(LSTFCB)
+	CP	'Z'
+	RET	Z
+	LD	HL,L1B0F
+	LD	A,(HL)
+	LD	(HL),0FFH
+	OR	A
+	JR	NZ,CRLF
+OUTLN:
+	CALL	NEXTCHR
+	CALL	LIST
+	CP	10
+	JR	NZ,OUTLN
+	RET
+
+PRTCNT:
+	LD	HL,ERCNTM
+	CALL	PRINT
+	LD	HL,(ERRCNT)
+	CALL	L1362
+	CALL	L1384
+CRLF:
+	LD	A,13
+	CALL	LIST
+	LD	A,10
+	JR	LIST
+
+L1108:
+	CALL	L1151
+	EX	DE,HL
+	CALL	L055B
+	EX	DE,HL
+	JR	Z,L1123
+	LD	A,D
+	OR	A
+	JR	Z,L1128
+	INC	A
+	JR	Z,L1128
+L111E:
+	LD	A,101
+	LD	(ERR),A
+L1123:
+	LD	A,E
+	JP	L107D
+L1128:
+	LD	A,(COUNT)
+	DEC	A
+	JR	NZ,L1123
+	LD	A,(L1B10)
+	CP	0EBH
+	JR	Z,L111E
+	AND	0FCH
+	CP	0E0H
+	JR	Z,L111E
+	AND	0F0H
+	CP	70H
+	JR	Z,L111E
+	JR	L1123
+
+L1144:
+	CALL	L1151
+	LD	A,E
+	CALL	L13BB
+	LD	A,D
+	JP	L107D
+
+L1151:
+	PUSH	BC
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	EX	DE,HL
+	LD	A,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	EX	DE,HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	ADD	HL,BC
+	POP	BC
+	EX	DE,HL
+	OR	A
+	RET	NZ
+	LD	A,64H
+	LD	(ERR),A
+	LD	DE,0
+	RET
+
+STRTLIN:
+	XOR	A
+	LD	(ERR),A
+	LD	(L1B0F),A
+	LD	HL,(PC)
+	LD	A,H
+	CALL	PHEX
+	LD	A,L
+PHEXB:
+	CALL	PHEX
+	LD	A,' '
+LIST:
+	PUSH	AF
+	LD	A,(LSTFCB)
+	CP	'Z'
+	JR	Z,L11ED
+	CP	'X'
+	JR	Z,L11F2
+	POP	AF
+	PUSH	AF
+	AND	7FH
+	PUSH	HL
+	LD	HL,(LSTPNT)
+	LD	(HL),A
+	CALL	L1546
+	LD	(LSTPNT),HL
+	JR	NZ,L11EC
+	LD	HL,LSTBUF
+	LD	(LSTPNT),HL
+	PUSH	DE
+	EX	DE,HL
+	PUSH	BC
+	LD	C,SETDMA
+	CALL	5
+	LD	DE,LSTFCB
+	LD	C,SEQWRT
+	CALL	5
+	POP	BC
+	POP	DE
+L11EC:
+	POP	HL
+L11ED:
+	POP	AF
+	RET
+L11F2:
+	POP	AF
+	PUSH	AF
+	CALL	OUT
+	POP	AF
+	RET
+
+PHEX:
+	LD	B,A
+	CALL	UHALF
+	CALL	LIST
+	LD	A,B
+	CALL	LHALF
+	JR	LIST
+
+L1214:
+	INC	A
+	JR	Z,L125B
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	HL
+	INC	A
+	JR	Z,L1253
+	INC	A
+	JR	Z,L124D
+	LD	HL,(PC)
+	ADD	HL,DE
+	LD	(PC),HL
+	LD	HL,(HEXADD)
+	ADD	HL,DE
+	LD	(HEXADD),HL
+	JR	L1257
+L124D:
+	LD	(HEXADD),DE
+	JR	L1257
+L1253:
+	LD	(PC),DE
+L1257:
+	POP	HL
+	JP	L1080
+L125B:
+	CALL	PRTCNT
+	LD	A,(HEXFCB)
+	CP	'Z'
+	JR	Z,SYMDMP
+	LD	A,(HEXCNT)
+	CP	-5
+	CALL	NZ,ENHEXL
+	LD	A,':'
+	CALL	PUTCHR
+	LD	B,10
+L1276:
+	PUSH	BC
+	LD	A,'0'
+	CALL	PUTCHR
+	POP	BC
+	DJNZ	L1276
+	CALL	L14F4
+	CALL	NZ,L13B3
+	CALL	L13B3
+	LD	C,CLOSE
+	LD	DE,HEXFCB
+	CALL	SYSTEM
+SYMDMP:
+	LD	A,(SYMFLG)
+	CP	'S'
+	JR	NZ,L12B4
+	LD	HL,SYMMES
+	CALL	PRINT
+	LD	DE,(BASE)
+	LD	A,D
+	OR	E
+	JR	Z,EXIT
+	LD	HL,(HEAP)
+	LD	SP,HL
+	CALL	L12E5
+L12B4:
+	LD	A,(LSTFCB)
+	CP	'X'
+	JR	Z,EXIT
+	CP	'Z'
+	JR	Z,L12CA
+	CALL	L12D6
+	LD	DE,LSTFCB
+	LD	C,CLOSE
+	CALL	5
+L12CA:
+	LD	A,'X'
+	LD	(LSTFCB),A
+	CALL	PRTCNT
+EXIT:	JP	0
+	RET
+
+L12D6:
+	LD	HL,(LSTPNT)
+	LD	DE,LSTBUF
+	OR	A
+	SBC	HL,DE
+	RET	Z
+	LD	A,1AH
+	CALL	LIST
+	JR	L12D6
+
+L12E5:
+	EX	DE,HL
+	PUSH	HL
+	LD	E,(HL)
+	LD	D,0
+	INC	HL
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	A,E
+	OR	D
+	CALL	NZ,L12E5
+	POP	HL
+	LD	B,(HL)
+	INC	HL
+	LD	A,0AH
+	SUB	B
+	JR	NC,L1315
+	LD	A,1
+L1315:
+	LD	D,A
+L1317:
+	LD	A,(HL)
+	INC	HL
+	CALL	LIST
+	DJNZ	L1317
+	LD	B,D
+	INC	B
+	LD	A,20H
+L1329:
+	CALL	LIST
+	DJNZ	L1329
+	INC	HL
+	INC	HL
+	PUSH	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	LD	A,(HL)
+	CALL	PHEX
+	DEC	HL
+	LD	A,(HL)
+	CALL	PHEX
+	CALL	CRLF
+	POP	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	A,D
+	OR	E
+	JR	NZ,L12E5
+	RET
+
+L1362:
+	LD	B,10H
+	LD	DE,0
+L1367:
+	ADD	HL,HL
+	LD	A,E
+	ADC	A,A
+	DAA
+	LD	E,A
+	LD	A,D
+	ADC	A,A
+	DAA
+	LD	D,A
+	RL	C
+	DJNZ	L1367
+	RET
+
+L1384:
+	EX	DE,HL
+	LD	B,10H
+	LD	A,C
+	CALL	L13A0
+	LD	A,H
+	CALL	L13AE
+	LD	A,H
+	CALL	L13A0
+	LD	A,L
+	CALL	L13AE
+	LD	A,L
+	LD	B,0
+L13A0:
+	CALL	LHALF
+L13A3:
+	CP	30H
+	JR	Z,L13A9
+	LD	B,0
+L13A9:
+	SUB	B
+	JP	LIST
+
+L13AE:
+	CALL	UHALF
+	JR	L13A3
+
+L13B3:
+	LD	A,1AH
+	CALL	PUTCHR
+	JR	NZ,L13B3
+	RET
+
+L13BB:
+	LD	(L1B10),A
+	PUSH	HL
+	PUSH	BC
+	PUSH	AF
+	PUSH	DE
+	CALL	L144E
+	POP	DE
+	LD	HL,COUNT
+	INC	(HL)
+	LD	A,(HL)
+	CP	7
+	JR	NZ,L13E9
+	LD	(HL),1
+	LD	A,20H
+	CALL	OUTLIN
+	LD	A,20H
+	LD	B,5
+L13E2:
+	CALL	LIST
+	DJNZ	L13E2
+L13E9:
+	POP	AF
+	CALL	PHEXB
+	POP	BC
+	LD	HL,(PC)
+	INC	HL
+	LD	(PC),HL
+	LD	HL,(HEXADD)
+	INC	HL
+	LD	(HEXADD),HL
+	POP	HL
+	RET
+
+REPERR:
+	OR	A		;Did an error occur?
+	RET	Z
+	PUSH	AF
+	LD	HL,ERRMES	;Print "ERROR"
+	CALL	PRINT
+	POP	AF
+	CALL	PHEX
+	LD	HL,HEXSUF
+	CALL	PRINT
+	LD	HL,(ERRCNT)
+	INC	HL
+	LD	(ERRCNT),HL
+	RET
+
+PRINT:
+	LD	A,(HL)
+	CALL	LIST
+	OR	A
+	RET	M
+	INC	HL
+	JR	PRINT
+
+OUT:
+	LD	E,A
+	LD	C,2
+SYSTEM:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	CALL	5
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+L144E:
+	PUSH	AF
+	LD	A,(HEXFCB)
+	CP	'Z'
+	JR	NZ,L145E
+	JP	L11ED
+L145E:
+	LD	DE,(LASTAD)
+	LD	HL,(HEXADD)
+	LD	(LASTAD),HL
+	INC	DE
+	LD	A,(HEXCNT)
+	CP	-5
+	JR	Z,NEWLIN
+	OR	A
+	SBC	HL,DE
+	JR	Z,AFHEX
+	CALL	ENHEXL
+NEWLIN:
+	LD	A,':'
+	CALL	PUTCHR
+	LD	A,-4
+	LD	(HEXCNT),A
+	XOR	A
+	LD	(CHKSUM),A
+	LD	HL,(HEXPNT)
+	LD	(HEXLEN),HL
+	CALL	HEXBYT
+	LD	A,(HEXADD+1)
+	CALL	HEXBYT
+	LD	A,(HEXADD)
+	CALL	HEXBYT
+	XOR	A
+	CALL	HEXBYT
+AFHEX:
+	POP	AF
+HEXBYT:
+	LD	B,A
+	LD	HL,CHKSUM
+	ADD	A,(HL)
+	LD	(HL),A
+	LD	A,B
+	CALL	UHALF
+	CALL	PUTCHR
+	LD	A,B
+	CALL	LHALF
+	CALL	PUTCHR
+	LD	HL,HEXCNT
+	INC	(HL)
+	LD	A,(HL)
+	CP	26
+	RET	NZ
+ENHEXL:
+	LD	HL,(HEXLEN)
+	LD	B,A
+	CALL	UHALF
+	LD	(HL),A
+	CALL	L1546
+	LD	A,B
+	CALL	LHALF
+	LD	(HL),A
+	LD	A,-6
+	LD	(HEXCNT),A
+	LD	A,(CHKSUM)
+	ADD	A,B
+	NEG
+	CALL	HEXBYT
+
+L14F4:
+	LD	A,13
+	CALL	PUTCHR
+	LD	A,10
+
+PUTCHR:
+	LD	HL,(HEXPNT)
+	LD	(HL),A
+	CALL	L1546
+	LD	(HEXPNT),HL
+	RET	NZ
+	PUSH	HL
+	LD	HL,L1B0E
+	LD	A,(HL)
+	LD	(HL),0
+	POP	HL
+	OR	A
+	RET	NZ
+	LD	C,SETDMA
+	EX	DE,HL
+	CALL	SYSTEM
+	LD	DE,HEXFCB
+	LD	C,SEQWRT
+	CALL	SYSTEM
+	EX	DE,HL
+	OR	A
+	RET	Z
+	LD	HL,WRTERR
+	JP	PRERR
+
+UHALF:
+	RRA
+	RRA
+	RRA
+	RRA
+LHALF:
+	AND	0FH
+	OR	30H
+	CP	'9'+1
+	RET	C
+	ADD	A,7
+	RET
+
+L1546:
+	INC	HL
+	PUSH	DE
+	PUSH	HL
+	LD	DE,HEXBUF+128
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	POP	DE
+	RET	Z
+	PUSH	DE
+	PUSH	HL
+	LD	DE,LSTBUF+128
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	POP	DE
+	RET	Z
+	PUSH	DE
+	PUSH	HL
+	LD	DE,L1B9B+128
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	POP	DE
+	RET	NZ
+	LD	HL,HEXBUF
+	RET
+
+NONE:	DB	0
+
+; 8086 MNEMONIC TABLE
+
+; This table is actually a sequence of subtables, each starting with a label.
+; The label signifies which mnemonics the subtable applies to--A3, for example,
+; means all 3-letter mnemonics beginning with A.
+
+A3:
+	DB	7
+	DB	'dd'
+	DW	GRP7
+	DB	2
+	DB	'nd'
+	DW	GRP13
+	DB	22H
+	DB	'dc'
+	DW	GRP7
+	DB	12H
+	DB	'aa'
+	DW	PUT
+	DB	37H
+	DB	'as'
+	DW	PUT
+	DB	3FH
+	DB	'am'
+	DW	GRP11
+	DB	0D4H
+	DB	'ad'
+	DW	GRP11
+	DB	0D5H
+A5:
+	DB	1
+	DB	'lign'
+	DW	ALIGN
+	DB	0
+C3:
+	DB	7
+	DB	'mp'
+	DW	GRP7
+	DB	3AH
+	DB	'lc'
+	DW	PUT
+	DB	0F8H
+	DB	'ld'
+	DW	PUT
+	DB	0FCH
+	DB	'li'
+	DW	PUT
+	DB	0FAH
+	DB	'mc'
+	DW	PUT
+	DB	0F5H
+	DB	'bw'
+	DW	PUT
+	DB	98H
+	DB	'wd'
+	DW	PUT
+	DB	99H
+C4:
+	DB	3
+	DB	'all'
+	DW	GRP14
+	DB	9AH
+	DB	'mpb'
+	DW	PUT
+	DB	0A6H
+	DB	'mpw'
+	DW	PUT
+	DB	0A7H
+D2:
+	DB	5
+	DB	'b'
+	DW	GRP23
+	DB	1
+	DB	'w'
+	DW	GRP23
+	DB	0
+	DB	'm'
+	DW	GRP23
+	DB	2
+	DB	's'
+	DW	GRP5
+	DB	1
+	DB	'i'
+	DW	PUT
+	DB	0FAH
+D3:
+	DB	4
+	DB	'ec'
+	DW	GRP8
+	DB	49H
+	DB	'iv'
+	DW	GRP10
+	DB	30H
+	DB	'aa'
+	DW	PUT
+	DB	27H
+	DB	'as'
+	DW	PUT
+	DB	2FH
+D4:
+	DB	1
+	DB	'own'
+	DW	PUT
+	DB	0FDH
+E2:
+	DB	1
+	DB	'i'
+	DW	PUT
+	DB	0FBH
+E3:
+	DB	3
+	DB	'qu'
+	DW	GRP5
+	DB	2
+	DB	'sc'
+	DW	GRP19
+	DB	0D8H
+	DB	'nd'
+	DW	END
+	DB	0
+E5:
+	DB	1
+	DB	'ndif'
+	DW	ENDIF
+	DB	0
+H3:
+	DB	1
+	DB	'lt'
+	DW	PUT
+	DB	0F4H
+H4:
+	DB	1
+	DB	'alt'
+	DW	PUT
+	DB	0F4H
+I2:
+	DB	2
+	DB	'n'
+	DW	GRP4
+	DB	0E4H
+	DB	'f'
+	DW	GRP5
+	DB	4
+I3:
+	DB	4
+	DB	'nc'
+	DW	GRP8
+	DB	41H
+	DB	'nb'
+	DW	GRP4
+	DB	0E4H
+	DB	'nw'
+	DW	GRP4
+	DB	0E5H
+	DB	'nt'
+	DW	GRP18
+	DB	0CCH
+I4:
+	DB	4
+	DB	'mul'
+	DW	GRP10
+	DB	28H
+	DB	'div'
+	DW	GRP10
+	DB	38H
+	DB	'ret'
+	DW	PUT
+	DB	0CFH
+	DB	'nto'
+	DW	PUT
+	DB	0CEH
+J2:
+	DB	10
+	DB	'p'
+	DW	GRP17
+	DB	0EBH
+	DB	'z'
+	DW	GRP17
+	DB	74H
+	DB	'e'
+	DW	GRP17
+	DB	74H
+	DB	'l'
+	DW	GRP17
+	DB	7CH
+	DB	'b'
+	DW	GRP17
+	DB	72H
+	DB	'a'
+	DW	GRP17
+	DB	77H
+	DB	'g'
+	DW	GRP17
+	DB	7FH
+	DB	'o'
+	DW	GRP17
+	DB	70H
+	DB	's'
+	DW	GRP17
+	DB	78H
+	DB	'c'
+	DW	GRP17
+	DB	72H
+J3:
+	DB	17
+	DB	'mp'
+	DW	GRP14
+	DB	0EAH
+	DB	'nz'
+	DW	GRP17
+	DB	75H
+	DB	'ne'
+	DW	GRP17
+	DB	75H
+	DB	'nl'
+	DW	GRP17
+	DB	7DH
+	DB	'ge'
+	DW	GRP17
+	DB	7DH
+	DB	'nb'
+	DW	GRP17
+	DB	73H
+	DB	'ae'
+	DW	GRP17
+	DB	73H
+	DB	'nc'
+	DW	GRP17
+	DB	73H
+	DB	'ng'
+	DW	GRP17
+	DB	7EH
+	DB	'le'
+	DW	GRP17
+	DB	7EH
+	DB	'na'
+	DW	GRP17
+	DB	76H
+	DB	'be'
+	DW	GRP17
+	DB	76H
+	DB	'pe'
+	DW	GRP17
+	DB	7AH
+	DB	'np'
+	DW	GRP17
+	DB	7BH
+	DB	'po'
+	DW	GRP17
+	DB	7BH
+	DB	'no'
+	DW	GRP17
+	DB	71H
+	DB	'ns'
+	DW	GRP17
+	DB	79H
+J4:
+	DB	5
+	DB	'cxz'
+	DW	GRP17
+	DB	0E3H
+	DB	'nge'
+	DW	GRP17
+	DB	7CH
+	DB	'nae'
+	DW	GRP17
+	DB	72H
+	DB	'nbe'
+	DW	GRP17
+	DB	77H
+	DB	'nle'
+	DW	GRP17
+	DB	7FH
+L3:
+	DB	3
+	DB	'ea'
+	DW	GRP6
+	DB	8DH
+	DB	'ds'
+	DW	GRP6
+	DB	0C5H
+	DB	'es'
+	DW	GRP6
+	DB	0C4H
+L4:
+	DB	5
+	DB	'oop'
+	DW	GRP17
+	DB	0E2H
+	DB	'odb'
+	DW	PUT
+	DB	0ACH
+	DB	'odw'
+	DW	PUT
+	DB	0ADH
+	DB	'ahf'
+	DW	PUT
+	DB	9FH
+	DB	'ock'
+	DW	PUT
+	DB	0F0H
+L5:
+	DB	2
+	DB	'oope'
+	DW	GRP17
+	DB	0E1H
+	DB	'oopz'
+	DW	GRP17
+	DB	0E1H
+L6:
+	DB	2
+	DB	'oopne'
+	DW	GRP17
+	DB	0E0H
+	DB	'oopnz'
+	DW	GRP17
+	DB	0E0H
+M3:
+	DB	2
+	DB	'ov'
+	DW	GRP1
+	DB	88H
+	DB	'ul'
+	DW	GRP10
+	DB	20H
+M4:
+	DB	2
+	DB	'ovb'
+	DW	PUT
+	DB	0A4H
+	DB	'ovw'
+	DW	PUT
+	DB	0A5H
+N3:
+	DB	3
+	DB	'ot'
+	DW	GRP9
+	DB	10H
+	DB	'eg'
+	DW	GRP9
+	DB	18H
+	DB	'op'
+	DW	PUT
+	DB	90H
+O2:
+	DB	1
+	DB	'r'
+	DW	GRP13
+	DB	0AH
+O3:
+	DB	2
+	DB	'ut'
+	DW	GRP4
+	DB	0E6H
+	DB	'rg'
+	DW	GRP5
+	DB	0
+O4:
+	DB	2
+	DB	'utb'
+	DW	GRP4
+	DB	0E6H
+	DB	'utw'
+	DW	GRP4
+	DB	0E7H
+P3:
+	DB	2
+	DB	'op'
+	DW	GRP22
+	DB	8FH
+	DB	'ut'
+	DW	GRP5
+	DB	3
+P4:
+	DB	2
+	DB	'ush'
+	DW	GRP2
+	DB	0FFH
+	DB	'opf'
+	DW	PUT
+	DB	9DH
+P5:
+	DB	1
+	DB	'ushf'
+	DW	PUT
+	DB	9CH
+R3:
+	DB	6
+	DB	'et'
+	DW	GRP16
+	DB	0C3H
+	DB	'ep'
+	DW	PUT
+	DB	0F3H
+	DB	'ol'
+	DW	GRP12
+	DB	0
+	DB	'or'
+	DW	GRP12
+	DB	8
+	DB	'cl'
+	DW	GRP12
+	DB	10H
+	DB	'cr'
+	DW	GRP12
+	DB	18H
+R4:
+	DB	2
+	DB	'epz'
+	DW	PUT
+	DB	0F3H
+	DB	'epe'
+	DW	PUT
+	DB	0F3H
+R5:
+	DB	2
+	DB	'epnz'
+	DW	PUT
+	DB	0F2H
+	DB	'epne'
+	DW	PUT
+	DB	0F2H
+S3:
+	DB	11
+	DB	'ub'
+	DW	GRP7
+	DB	2AH
+	DB	'bb'
+	DW	GRP7
+	DB	1AH
+	DB	'bc'
+	DW	GRP7
+	DB	1AH
+	DB	'tc'
+	DW	PUT
+	DB	0F9H
+	DB	'td'
+	DW	PUT
+	DB	0FDH
+	DB	'ti'
+	DW	PUT
+	DB	0FBH
+	DB	'hl'
+	DW	GRP12
+	DB	20H
+	DB	'hr'
+	DW	GRP12
+	DB	28H
+	DB	'al'
+	DW	GRP12
+	DB	20H
+	DB	'ar'
+	DW	GRP12
+	DB	38H
+	DB	'eg'
+	DW	GRP21
+	DB	26H
+S4:
+	DB	5
+	DB	'cab'
+	DW	PUT
+	DB	0AEH
+	DB	'caw'
+	DW	PUT
+	DB	0AFH
+	DB	'tob'
+	DW	PUT
+	DB	0AAH
+	DB	'tow'
+	DW	PUT
+	DB	0ABH
+	DB	'ahf'
+	DW	PUT
+	DB	9EH
+T4:
+	DB	1
+	DB	'est'
+	DW	GRP20
+	DB	84H
+U2:
+	DB	1
+	DB	'p'
+	DW	PUT
+	DB	0FCH
+W4:
+	DB	1
+	DB	'ait'
+	DW	PUT
+	DB	9BH
+X3:
+	DB	1
+	DB	'or'
+	DW	GRP13
+	DB	32H
+X4:
+	DB	2
+	DB	'chg'
+	DW	GRP3
+	DB	86H
+	DB	'lat'
+	DW	PUT
+	DB	0D7H
+
+
+OPTAB:
+; Table of pointers  to mnemonics. For each letter of the alphabet (the
+; starting letter of the mnemonic), there are 5 entries. Each entry
+; corresponds to a mnemonic whose length is 2, 3, 4, 5, and 6 characters
+; long, respectively. If there are no mnemonics for a given combination
+; of first letter and length (such as A-2), then the corresponding entry
+; points to NONE. Otherwise, it points to a place in the mnemonic table
+; for that type.
+
+; This table only needs to be modified if a mnemonic is added to a group
+; previously marked NONE. Change the NONE to a label made up of the first
+; letter of the mnemonic and its length, then add a new subsection to
+; the mnemonic table in alphabetical order.
+
+	DW	NONE
+	DW	A3
+	DW	NONE
+	DW	A5
+	DW	NONE
+	DW	NONE	;B
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;C
+	DW	C3
+	DW	C4
+	DW	NONE
+	DW	NONE
+	DW	D2	;D
+	DW	D3
+	DW	D4
+	DW	NONE
+	DW	NONE
+	DW	E2	;E
+	DW	E3
+	DW	NONE
+	DW	E5
+	DW	NONE
+	DW	NONE	;F
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;G
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;H
+	DW	H3
+	DW	H4
+	DW	NONE
+	DW	NONE
+	DW	I2	;I
+	DW	I3
+	DW	I4
+	DW	NONE
+	DW	NONE
+	DW	J2	;J
+	DW	J3
+	DW	J4
+	DW	NONE
+	DW	NONE
+	DW	NONE	;K
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;L
+	DW	L3
+	DW	L4
+	DW	L5
+	DW	L6
+	DW	NONE	;M
+	DW	M3
+	DW	M4
+	DW	NONE
+	DW	NONE
+	DW	NONE	;N
+	DW	N3
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	O2	;O
+	DW	O3
+	DW	O4
+	DW	NONE
+	DW	NONE
+	DW	NONE	;P
+	DW	P3
+	DW	P4
+	DW	P5
+	DW	NONE
+	DW	NONE	;Q
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;R
+	DW	R3
+	DW	R4
+	DW	R5
+	DW	NONE
+	DW	NONE	;S
+	DW	S3
+	DW	S4
+	DW	NONE
+	DW	NONE
+	DW	NONE	;T
+	DW	NONE
+	DW	T4
+	DW	NONE
+	DW	NONE
+	DW	U2	;U
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;V
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;W
+	DW	NONE
+	DW	W4
+	DW	NONE
+	DW	NONE
+	DW	NONE	;X
+	DW	X3
+	DW	X4
+	DW	NONE
+	DW	NONE
+	DW	NONE	;Y
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE	;Z
+	DW	NONE
+	DW	NONE
+	DW	NONE
+	DW	NONE
+
+HEADER:	DB	13,10,'Seattle Computer Products 8086 Assembler Version 2.00'
+	DB	13,10,'$'
+ERRMES:	DM	'***** ERROR no. '
+NOSPAC:	DB	13,10,'No directory space',13,10,'$'
+HEXSUF:	DM	'H',13,10
+NOMEM:	DB	13,10,'Insufficient memory',13,10,'$'
+NOFILE:	DB	13,10,'File not found',13,10,'$'
+WRTERR:	DB	13,10,'Disk write error',13,10,'$'
+BADDSK:	DB	13,10,'Bad disk specifier',13,10,'$'
+ERCNTM:	DM	13,10,13,10,'Error Count ='
+SYMMES:	DM	13,10,'Symbol Table',13,10,13,10
+EXTEND:	DB	'A86',0,0,0,0
+IFEND:	DB	5,'endif'
+RETSTR:	DM	'ret'
+HEXFCB:	DB	0,'        HEX',0,0,0,0
+	DS	16
+	DB	0
+LSTFCB:	DB	0,'        PRN',0,0,0,0
+	DS	16
+	DB	0
+PC:	DS	2
+OLDPC:	DS	2
+LABPT:	DS	2
+FLAG:	DS	1
+L1A98:	DS	1
+ADDR:	DS	2
+ALABEL:	DS	2
+DATA:	DS	2
+DLABEL:	DS	2
+CON:	DS	2
+UNDEF:	DS	2
+LENID:	DS	1
+ID:	DS	80
+CHR:	DS	1
+SYM:	DS	1
+BASE:	DS	2
+HEAP:	DS	2
+SYMFLG:	DS	1
+CODE:	DS	2
+DATSIZ:	DS	1
+RELOC:	DS	1
+BCOUNT:	DS	1
+COUNT:	DS	1
+ERR:	DS	1
+HEXPNT:	DS	2
+HEXLEN:	DS	2
+HEXADD:	DS	2
+LASTAD:	DS	2
+HEXCNT:	DS	1
+CHKSUM:	DS	1
+L1B0E:	DS	1
+L1B0F:	DS	1
+L1B10:	DS	1
+IFFLG:	DS	1
+CHKLAB:	DS	1
+LSTPNT:	DS	2
+ERRCNT:	DS	2
+LSTRET:	DS	2
+RETPT:	DS	2
+HEXBUF:	DS	128
+L1B9B:	DS	128
+LSTBUF:	DS	128
+	DS	50
+STACK:	EQU	$
+START:	EQU	$
+

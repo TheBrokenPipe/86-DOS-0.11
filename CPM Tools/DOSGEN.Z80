@@ -1,0 +1,312 @@
+; DOSGEN  The SYSGEN for 86-DOS  version 1.00
+;   by Broken Pipe
+; Runs on the Z80 under CP/M
+
+SECSIZ:	EQU	128		;128 bytes per sector
+SPT:	EQU	26		;26 sectors per track
+SYSTRK:	EQU	2		;2 system tracks
+
+;
+; BIOS call offsets.
+;
+SELDSK:	EQU	24
+SETTRK:	EQU	27
+SETSEC:	EQU	30
+SETDMA:	EQU	33
+WRITE:	EQU	39
+
+;
+; BDOS call numbers.
+;
+WRITESTR: EQU	9
+DRVSET:	EQU	14
+OPEN:	EQU	15
+READ:	EQU	20
+DRVGET:	EQU	25
+DMAOFF:	EQU	26
+
+;
+; Zero Page and FCB fields.
+;
+BDOS:	EQU	5
+FCB:	EQU	5CH
+FCB2:	EQU	6CH
+EX:	EQU	12
+S1:	EQU	13
+S2:	EQU	14
+RC:	EQU	15
+
+	ORG	100H
+
+	LD	SP,STACK	;Setup new stack
+	LD	C,DRVGET
+	CALL	BDOS		;Get current drive
+	LD	(CURDRV),A	;Save it for EXIT
+	LD	A,(FCB)		;Get dest drive letter
+	OR	A		;Default drive?
+	JR	NZ,DRVOK	;No, all good
+	LD	DE,DRVBAD	;Cannot transfer system to default drive
+	JR	EXIT
+DRVOK:	DEC	A		;Convert to actual drive number
+	LD	(DRIVE),A
+	LD	IX,BRCFCB	;Load boot record FCB
+	CALL	FOPEN		;Open it
+	LD	HL,PBOOT	;Set DMA to boot record in memory
+	CALL	FREAD		;Read it
+	LD	A,(FCB2+1)	;Get first char of second param
+	OR	20H		;Convert to lower case
+	CP	't'		;Temp disk?
+	JR	Z,TMPIO		;Yes, use TMPBIO.COM for BIOS
+	LD	IX,BIOFCB	;Load BIOS FCB
+	JR	OPENIO
+TMPIO:	LD	IX,TIOFCB	;Load temp BIOS FCB
+OPENIO:	CALL	FOPEN		;Open it
+	LD	HL,PBIOS	;Set DMA to BIOS in memory
+	CALL	FREAD		;Read it
+	LD	IX,DOSFCB	;Load DOS FCB
+	CALL	FOPEN		;Open it
+	LD	HL,PDOS		;Set DMA to DOS in memory
+	CALL	FREAD		;Read it
+	LD	A,(FCB2+1)	;Get first char of second param
+	OR	20H		;Convert to lower case
+	CP	't'		;Temp disk?
+	JR	NZ,SKIP		;No, skip writing TMPCMD.COM
+	LD	IX,CMDFCB	;Load CMD FCB
+	CALL	FOPEN		;Open it
+	LD	HL,PCMD		;Set DMA to CMD in memory
+	CALL	FREAD		;Read it
+SKIP:	CALL	WRTSYS		;Write system in memory to disk
+	LD	DE,DONE		;Fall through to EXIT
+
+;
+; Prints the string in DE and exits. Does not return.
+;
+EXIT:
+	LD	C,WRITESTR
+	CALL	BDOS		;Print message
+	LD	A,(CURDRV)
+	LD	C,A
+	PUSH	BC		;Save drive number
+	CALL	SEL		;Restore old drive
+	LD	C,DRVSET
+	POP	DE		;Restore drive number
+	CALL	BDOS
+	JP	0
+
+;
+; Opens a file with its FCB in IX. IX preserved, all other
+; registers destroyed. Does not return if the requested file
+; cannot be opened.
+;
+FOPEN:
+	LD	(IX+EX),0	;Set EX to 0
+	LD	(IX+S1),0	;Set S1 to 0
+	LD	(IX+S2),0	;Set S2 to 0
+	LD	(IX+RC),0	;Set RC to 0
+	LD	C,OPEN
+	PUSH	IX
+	POP	DE		;DE points to FCB
+	PUSH	IX		;Save registers
+	CALL	BDOS		;Open file
+	POP	IX		;Restore registers
+	CP	-1		;Error?
+	RET	NZ		;No, return
+	LD	DE,OFAIL
+	LD	C,WRITESTR
+	PUSH	IX		;Save registers
+	CALL	BDOS		;Print first part of open fail message
+	POP	IX		;Restore registers
+	LD	(IX+12),'$'	;Turn FCB file name into a string
+	INC	IX		;Point to the file name
+	PUSH	IX
+	POP	DE		;DE points to file name
+	LD	C,WRITESTR
+	CALL	BDOS		;Print it
+	LD	DE,OPENER
+	JR	EXIT		;Exit with last part of the message.
+
+;
+; Reads all records of a file pointed to by its FCB in IX to
+; the DMA in HL. IX preserved, all other registers destroyed.
+; Does not return if reading fails.
+;
+FREAD:
+	PUSH	HL
+	POP	DE		;DE points to DMA
+	LD	C,DMAOFF
+	PUSH	IX		;Save registers
+	PUSH	HL
+	CALL	BDOS		;Set DMA before reading
+	POP	HL		;Restore registers
+	POP	IX
+LDREC:	LD	C,READ
+	PUSH	IX
+	POP	DE
+	PUSH	IX		;Save registers
+	PUSH	HL
+	CALL	BDOS		;Read a record
+	POP	HL		;Restore registers
+	POP	IX
+	CP	0		;Success?
+	JR	NZ,CHKEND	;No, check if EOF
+	LD	DE,128
+	ADD	HL,DE		;Increment DMA by 128 bytes
+	JR	FREAD		;Read next record
+CHKEND:	CP	1		;EOF?
+	RET	Z		;Yes, done
+	LD	DE,RFAIL
+	LD	C,WRITESTR
+	PUSH	IX		;Save registers
+	CALL	BDOS		;Print first part of read fail message
+	POP	IX		;Restore registers
+	LD	(IX+12),'$'	;Turn FCB file name into a string
+	INC	IX		;Point to the file name
+	PUSH	IX
+	POP	DE		;DE points to file name
+	LD	C,WRITESTR
+	CALL	BDOS		;Print it
+	LD	DE,RDERR
+	JP	EXIT		;Exit with last part of the message.
+
+;
+; BIOS drive select routine, drive in C. All registers destroyed.
+;
+SEL:
+	LD	HL,(1)
+	LD	DE,SELDSK
+	ADD	HL,DE
+	JP	(HL)
+
+;
+; BIOS set track routine, track in C. All registers destroyed.
+;
+TRK:
+	LD	HL,(1)
+	LD	DE,SETTRK
+	ADD	HL,DE
+	JP	(HL)
+
+;
+; BIOS set sector routine, sector in C. All registers destroyed.
+;
+SEC:
+	LD	HL,(1)
+	LD	DE,SETSEC
+	ADD	HL,DE
+	JP	(HL)
+
+;
+; BIOS set DMA routine, DMA in BC. All registers destroyed.
+;
+DMA:
+	LD	HL,(1)
+	LD	DE,SETDMA
+	ADD	HL,DE
+	JP	(HL)
+
+;
+; BIOS disk write routine. All registers destroyed.
+;
+DWRITE:
+	LD	HL,(1)
+	LD	DE,WRITE
+	ADD	HL,DE
+	JP	(HL)
+
+;
+; Writes the system in memory at LOADP to the first SYSTRK tracks of
+; the disk in (DRIVE). All registers destroyed.
+;
+WRTSYS:
+	LD	HL,DRIVE
+	LD	C,(HL)
+	CALL	SEL		;Select dest drive
+	LD	HL,LOADP-SECSIZ	;Load point in RAM for system - SECSIZ
+	LD	(DMADDR),HL	;Save it
+	LD	A,-1		;Start with track = -1
+	LD	(TRACK),A
+WRTTRK:	LD	HL,TRACK
+	INC	(HL)		;Next track
+	LD	A,SYSTRK	;Number of system tracks
+	CP	(HL)		;All system tracks done?
+	RET	Z		;Yes, system transfer complete
+	LD	C,(HL)
+	CALL	TRK		;Set track number
+	LD	A,-1		;Start with sector = -1
+	LD	(SECTOR),A
+WRTSEC:	LD	A,SPT		;Sectors per track
+	LD	HL,SECTOR
+	INC	(HL)		;Next sector
+	CP	(HL)		;All sectors done?
+	JR	Z,WRTTRK	;Yes, track write complete
+	LD	C,(HL)		;Get sector number
+	INC	C		;One-based indexing
+	CALL	SEC		;Set sector number
+	LD	HL,(DMADDR)
+	LD	BC,SECSIZ
+	ADD	HL,BC		;Increment DMA
+	LD	(DMADDR),HL
+	LD	B,H
+	LD	C,L		;BC = HL for DMA call
+	CALL	DMA		;Set DMA
+	XOR	A
+	LD	(RETRY),A	;Clear retry count
+TRYSEC:	LD	A,(RETRY)	;Get retry count
+	CP	10		;Too many (more than 10) retries?
+	JR	C,TRYOK		;No, can perform write
+	LD	DE,WRTER	;Load write error message
+	JP	EXIT		;Print and quit
+TRYOK:	INC	A
+	LD	(RETRY),A	;Increment retry count
+	CALL	DWRITE		;Raw disk write
+	OR	A		;Success?
+	JR	Z,WRTSEC	;Yes, next sector
+	JR	TRYSEC		;Retry the write
+
+;
+; Messages.
+;
+DRVBAD:	DB	'Bad drive specification',13,10,'$'
+OFAIL:	DB	'Failed to open "$'
+OPENER:	DB	'"',13,10,'$'
+RFAIL:	DB	'Failed to read "$'
+RDERR:	DB	'"',13,10,'$'
+WRTER:	DB	'Disk write error',13,10,'$'
+DONE:	DB	'System transfered',13,10,'$'
+
+;
+; FCBs of system files. Open these from bottom to top, one at a time.
+;
+CMDFCB:	DB	0,'TMPCMD  COM'
+DOSFCB:	DB	0,'86DOS   COM'
+TIOFCB:	DB	0,'TMPBIO  COM'
+BIOFCB:	DB	0,'DOSIO   COM'
+BRCFCB:	DB	0,'BOOT    COM'
+	DS	24
+
+;
+; Global variables.
+;
+CURDRV:	DS	1
+DRIVE:	DS	1
+TRACK:	DS	1
+SECTOR:	DS	1
+DMADDR:	DS	2
+RETRY:	DS	1
+
+;
+; Stack of 128 bytes.
+;
+	DS	128
+STACK:
+
+;
+; Load point of the 86-DOS system and pointers to different system
+; components.
+;
+LOADP:
+PBOOT:	EQU	$		;Relative offset of BOOT (0 * 128)
+PBIOS:	EQU	$+128		;Relative offset of BIOS (1 * 128)
+PDOS:	EQU	$+1152		;Relative offset of 86DOS (9 * 128)
+PCMD:	EQU	$+4480		;Relative offset of TMPCMD (35 * 128)
+
