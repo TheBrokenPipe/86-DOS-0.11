@@ -1,10 +1,29 @@
-; DOSGEN  The SYSGEN for 86-DOS  version 1.00
+; DOSGEN  The SYSGEN for 86-DOS  version 1.10
 ;   by Broken Pipe
 ; Runs on the Z80 under CP/M
 
+;
+; Disk Format Parameters
+;
 SECSIZ:	EQU	128		;128 bytes per sector
 SPT:	EQU	26		;26 sectors per track
-SYSTRK:	EQU	2		;2 system tracks
+SYSTRK:	EQU	2		;2 tracks for just system
+NEWTRK:	EQU	4		;4 tracks for new disk
+CLSSIZ:	EQU	4		;4 records per cluster
+
+;
+; File System Parameters
+;
+OBOOT:	EQU	0		;Sector 0
+OBIOS:	EQU	128		;Sector 1
+ODOS:	EQU	1152		;Sector 9
+OFAT1:	EQU	6656		;Sector 52
+OFAT2:	EQU	7424		;Sector 58
+ODIR:	EQU	8192		;Sector 64
+OUSER:	EQU	9216		;Sector 72
+
+FATSIZ:	EQU	OFAT2-OFAT1	;FAT size in bytes
+DIRSIZ:	EQU	OUSER-ODIR	;Directory size in bytes
 
 ;
 ; BIOS call offsets.
@@ -36,6 +55,9 @@ S1:	EQU	13
 S2:	EQU	14
 RC:	EQU	15
 
+;
+; Program entry point.
+;
 	ORG	100H
 
 	LD	SP,STACK	;Setup new stack
@@ -49,18 +71,13 @@ RC:	EQU	15
 	JR	EXIT
 DRVOK:	DEC	A		;Convert to actual drive number
 	LD	(DRIVE),A
+	CALL	SETSYS		;Setup system area
 	LD	IX,BRCFCB	;Load boot record FCB
 	CALL	FOPEN		;Open it
 	LD	HL,PBOOT	;Set DMA to boot record in memory
 	CALL	FREAD		;Read it
-	LD	A,(FCB2+1)	;Get first char of second param
-	OR	20H		;Convert to lower case
-	CP	't'		;Temp disk?
-	JR	Z,TMPIO		;Yes, use TMPBIO.COM for BIOS
 	LD	IX,BIOFCB	;Load BIOS FCB
-	JR	OPENIO
-TMPIO:	LD	IX,TIOFCB	;Load temp BIOS FCB
-OPENIO:	CALL	FOPEN		;Open it
+	CALL	FOPEN		;Open it
 	LD	HL,PBIOS	;Set DMA to BIOS in memory
 	CALL	FREAD		;Read it
 	LD	IX,DOSFCB	;Load DOS FCB
@@ -69,12 +86,13 @@ OPENIO:	CALL	FOPEN		;Open it
 	CALL	FREAD		;Read it
 	LD	A,(FCB2+1)	;Get first char of second param
 	OR	20H		;Convert to lower case
-	CP	't'		;Temp disk?
-	JR	NZ,SKIP		;No, skip writing TMPCMD.COM
-	LD	IX,CMDFCB	;Load CMD FCB
-	CALL	FOPEN		;Open it
-	LD	HL,PCMD		;Set DMA to CMD in memory
-	CALL	FREAD		;Read it
+	CP	'n'		;New disk?
+	JR	NZ,SKIP		;No, skip writing file system
+	CALL	SETFAT		;Setup FAT image
+	LD	IX,CMDFCB	;Load COMMAND FCB
+	CALL	ADDFIL		;Add it to FAT and directory
+	LD	IX,RDCFCB	;Load RDCPM FCB
+	CALL	ADDFIL		;Add it to FAT and directory
 SKIP:	CALL	WRTSYS		;Write system in memory to disk
 	LD	DE,DONE		;Fall through to EXIT
 
@@ -92,6 +110,47 @@ EXIT:
 	POP	DE		;Restore drive number
 	CALL	BDOS
 	JP	0
+
+;
+; Sets up the system area in memory. AF, BC, DE and HL destroyed.
+;
+SETSYS:
+	LD	HL,PBOOT	;Fill system area with 0
+	LD	DE,PBOOT+1
+	LD	BC,PFAT1-PBOOT-1
+	LD	(HL),0
+	LDIR
+	LD	A,SYSTRK	;Set track count to SYSTRK
+	LD	(NUMTRK),A
+	RET
+
+;
+; Sets up a FAT image after the system area. AF, BC, DE and HL
+; destroyed.
+;
+SETFAT:
+	LD	HL,PFAT1	;Fill FATs with 0
+	LD	DE,PFAT1+1
+	LD	BC,FATSIZ+FATSIZ-1	
+	LD	(HL),0
+	LDIR
+	LD	HL,PDIR		;Fill directory with 0E5H
+	LD	DE,PDIR+1
+	LD	BC,DIRSIZ-1	
+	LD	(HL),0E5H
+	LDIR
+	LD	HL,0		;Set current cluster to 0
+	LD	(CURCLS),HL
+	LD	HL,PDIR		;Set current directory entry
+	LD	(CURDIR),HL
+	LD	HL,PUSER	;Set current data pointer
+	LD	(CURPTR),HL
+	LD	A,NEWTRK	;Set track count to NEWTRK
+	LD	(NUMTRK),A
+	LD	DE,0FFFH	;Write the first 2 FAT entries
+	CALL	PUTCLS
+	CALL	PUTCLS
+	RET
 
 ;
 ; Opens a file with its FCB in IX. IX preserved, all other
@@ -123,20 +182,24 @@ FOPEN:
 	LD	C,WRITESTR
 	CALL	BDOS		;Print it
 	LD	DE,OPENER
-	JR	EXIT		;Exit with last part of the message.
+	JP	EXIT		;Exit with last part of the message.
 
 ;
-; Reads all records of a file pointed to by its FCB in IX to
-; the DMA in HL. IX preserved, all other registers destroyed.
-; Does not return if reading fails.
+; Reads all records of a file pointed to by its FCB in IX to the
+; DMA address in HL. IX preserved, all other registers destroyed.
+; Does not return if reading fails. Returns number of records
+; read in BC.
 ;
 FREAD:
-	PUSH	HL
+	LD	IY,0		;Set record count to 0
+RDLOOP:	PUSH	HL
 	POP	DE		;DE points to DMA
 	LD	C,DMAOFF
 	PUSH	IX		;Save registers
 	PUSH	HL
+	PUSH	IY
 	CALL	BDOS		;Set DMA before reading
+	POP	IY
 	POP	HL		;Restore registers
 	POP	IX
 LDREC:	LD	C,READ
@@ -144,15 +207,27 @@ LDREC:	LD	C,READ
 	POP	DE
 	PUSH	IX		;Save registers
 	PUSH	HL
+	PUSH	IY
 	CALL	BDOS		;Read a record
+	POP	IY
 	POP	HL		;Restore registers
 	POP	IX
 	CP	0		;Success?
 	JR	NZ,CHKEND	;No, check if EOF
+	INC	IY		;Increment record count
 	LD	DE,128
 	ADD	HL,DE		;Increment DMA by 128 bytes
-	JR	FREAD		;Read next record
-CHKEND:	CP	1		;EOF?
+	JR	RDLOOP		;Read next record
+CHKEND:	PUSH	AF		;Save AF
+	PUSH	IX		;Save IX
+	PUSH	IY		;Save record count
+	LD	C,DMAOFF
+	LD	DE,80H
+	CALL	BDOS		;Reset DMA to default
+	POP	BC		;Restore record count to BC
+	POP	IX		;Restore IX
+	POP	AF		;Restore AF
+	CP	1		;EOF?
 	RET	Z		;Yes, done
 	LD	DE,RFAIL
 	LD	C,WRITESTR
@@ -167,6 +242,207 @@ CHKEND:	CP	1		;EOF?
 	CALL	BDOS		;Print it
 	LD	DE,RDERR
 	JP	EXIT		;Exit with last part of the message.
+
+;
+; Multiplies BC by DE and returns the result in HL. AF and BC destroyed.
+;
+MLTPLY:
+	LD	A,B
+	LD	B,16
+MLOOP:	ADD	HL,HL
+	SLA	C
+	RLA
+	JR	NC,MNOADD
+	ADD	HL,DE
+MNOADD:	DJNZ	MLOOP
+	RET
+
+;
+; Divides BC by DE and returns the result in BC, with remainder in HL.
+; AF and BC destroyed. 
+;
+DIVIDE:
+	LD	HL,0
+	LD	A,B
+	LD	B,8
+DIVLP1:	RLA
+	ADC	HL,HL
+	SBC	HL,DE
+	JR	NC,DNADD1
+	ADD	HL,DE
+DNADD1:	DJNZ	DIVLP1
+	RLA
+	CPL
+	LD	B,A
+	LD	A,C
+	LD	C,B
+	LD	B,8
+DIVLP2:	RLA
+	ADC	HL,HL
+	SBC	HL,DE
+	JR	NC,DNADD2
+	ADD	HL,DE
+DNADD2:	DJNZ	DIVLP2
+	RLA
+	CPL
+	LD	B,C
+	LD	C,A
+	RET
+
+;
+; Writes the lowest 12 bits of DE to the BCth entry of the FAT pointed
+; to by HL. AF and HL destroyed.
+;
+FATPUT:
+	PUSH	BC		;Save registers
+	PUSH	DE
+	LD	A,D		;Make DE a 12-bit number
+	AND	0FH
+	LD	D,A
+	BIT	0,C		;Is cluster even?
+	PUSH	AF		;Save flags
+	ADD	HL,BC		;HL = HL + BC * 1.5
+	SRL	B
+	RR	C
+	ADD	HL,BC
+	POP	AF		;Restore flags
+	JR	Z,NOTODD	;Jump if even
+	LD	A,(HL)		;Odd, get byte at HL
+	AND	0FH		;Clear high bits
+	PUSH	HL		;Save HL
+	LD	H,D		;Shift DE by 4 bits
+	LD	L,E
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	LD	D,H
+	LD	E,L
+	POP	HL		;Restore HL
+	OR	E		;Combine with high bits of E
+	LD	(HL),A		;Save it back
+	INC	HL		;Point to next byte
+	LD	(HL),D		;Save high byte of DE
+	JR	PUTDON		;Done, pop registers and return
+NOTODD:	LD	(HL),E		;Even, save low byte of DE
+	INC	HL		;Point to next byte
+	LD	A,(HL)		;Get byte at HL
+	AND	0F0H		;Clear low 4 bits
+	OR	D		;Combine with high byte of DE
+	LD	(HL),A		;Save it back
+PUTDON:	POP	DE		;Restore registers
+	POP	BC
+	RET
+
+;
+; Writes the lowest 12 bits of DE to next entry of the FATs at
+; PFAT1 and PFAT2. AF, BC and HL destroyed. (CURCLS) automatically
+; incremented.
+;
+PUTCLS:
+	LD	HL,PFAT1
+	LD	BC,(CURCLS)
+	CALL	FATPUT
+	LD	HL,PFAT2
+	CALL	FATPUT
+	INC	BC
+	LD	(CURCLS),BC
+	RET
+
+;
+; Converts the record count in BC to cluster count. AF and HL
+; destroyed.
+;
+RECTOCLS:
+	LD	HL,CLSSIZ-1	;Add CLSSIZ-1
+	ADD	HL,BC
+	LD	B,H
+	LD	C,L
+	LD	DE,CLSSIZ
+	CALL	DIVIDE		;Divide by CLSSIZ
+	RET
+
+;
+; Adds a file pointed to by its FCB in IX to the system FAT image.
+; All registers destroyed. Does not return of the file cannopt be
+; opened and read. (CURCLS), (CURDIR) and (CURPTR) automatically
+; incremented.
+;
+ADDFIL:
+	CALL	FOPEN		;Open the file
+	LD	HL,(CURPTR)	;Set DMA to current file location
+	CALL	FREAD		;Read it
+	PUSH	BC		;Save record count
+	CALL	RECTOCLS	;Convert to number of clusters
+	PUSH	BC		;Save cluster count
+	LD	H,B		;Multiply by 128
+	LD	L,C
+	XOR	A
+	SRL	H
+	RR	L
+	RRA
+	LD	H,L
+	LD	L,A
+	LD	B,H		;Multiply by CLSSIZ for bytes
+	LD	C,L
+	LD	DE,CLSSIZ
+	CALL	MLTPLY
+	LD	BC,(CURPTR)	;Load current data pointer
+	ADD	HL,BC		;Add size and pointer
+	LD	(CURPTR),HL	;Save new data pointer
+	POP	BC		;Restore cluster count
+	LD	H,B		;Save cluster count to HL
+	LD	L,C
+	LD	DE,(CURCLS)	;Load current cluster
+	PUSH	DE		;Save as starting cluster
+FATLP:	OR	A		;Decrement cluster count
+	LD	DE,1
+	SBC	HL,DE
+	JR	Z,LSTCLS	;Handle last cluster if 0
+	JP	M,EMPTY		;Handle empty file if negative
+	LD	DE,(CURCLS)	;Get current cluster
+	INC	DE		;Next cluster = current + 1
+	PUSH	HL
+	CALL	PUTCLS		;Write FAT entry
+	POP	HL
+	JR	FATLP		;Go to next cluster
+LSTCLS:	LD	DE,0FFFH	;Load end-of-chain value
+	CALL	PUTCLS		;Write FAT entry
+	JR	WRTDIR		;Go write directory entry
+EMPTY:	POP	DE		;Discard saved starting cluster
+	LD	DE,0		;Save 0 as new starting cluster
+	PUSH	DE
+WRTDIR:	LD	DE,(CURDIR)	;Load pointer to current dir entry
+	PUSH	IX
+	POP	HL		;HL points to FCB
+	INC	HL		;Increment to point to file name
+	LD	BC,11		;11 characters to copy
+	LDIR			;Copy file name over
+	POP	HL		;Restore starting cluster number
+	LD	A,L		;Write it to directory entry
+	LD	(DE),A
+	INC	DE
+	LD	A,H
+	LD	(DE),A
+	INC	DE
+	POP	HL		;Restore record count
+	XOR	A		;Multiply by 128 to get file size
+	SRL	H
+	RR	L
+	RRA
+	LD	H,L
+	LD	L,A
+	LD	A,L		;Write file size
+	LD	(DE),A
+	INC	DE
+	LD	A,H
+	LD	(DE),A
+	INC	DE
+	XOR	A		;Write 0 for high byte of file size
+	LD	(DE),A
+	INC	DE
+	LD	(CURDIR),DE	;Update current directory pointer
+	RET
 
 ;
 ; BIOS drive select routine, drive in C. All registers destroyed.
@@ -214,7 +490,7 @@ DWRITE:
 	JP	(HL)
 
 ;
-; Writes the system in memory at LOADP to the first SYSTRK tracks of
+; Writes the system in memory at LOADP to the first (NUMTRK) tracks of
 ; the disk in (DRIVE). All registers destroyed.
 ;
 WRTSYS:
@@ -227,8 +503,8 @@ WRTSYS:
 	LD	(TRACK),A
 WRTTRK:	LD	HL,TRACK
 	INC	(HL)		;Next track
-	LD	A,SYSTRK	;Number of system tracks
-	CP	(HL)		;All system tracks done?
+	LD	A,(NUMTRK)	;Number of tracks to write
+	CP	(HL)		;All tracks done?
 	RET	Z		;Yes, system transfer complete
 	LD	C,(HL)
 	CALL	TRK		;Set track number
@@ -275,11 +551,11 @@ WRTER:	DB	'Disk write error',13,10,'$'
 DONE:	DB	'System transfered',13,10,'$'
 
 ;
-; FCBs of system files. Open these from bottom to top, one at a time.
+; FCBs. Open these from bottom to top, one at a time.
 ;
-CMDFCB:	DB	0,'TMPCMD  COM'
+RDCFCB:	DB	0,'RDCPM   COM'
+CMDFCB:	DB	0,'COMMAND COM'
 DOSFCB:	DB	0,'86DOS   COM'
-TIOFCB:	DB	0,'TMPBIO  COM'
 BIOFCB:	DB	0,'DOSIO   COM'
 BRCFCB:	DB	0,'BOOT    COM'
 	DS	24
@@ -293,6 +569,10 @@ TRACK:	DS	1
 SECTOR:	DS	1
 DMADDR:	DS	2
 RETRY:	DS	1
+CURCLS:	DS	2
+CURDIR:	DS	2
+CURPTR:	DS	2
+NUMTRK:	DS	1
 
 ;
 ; Stack of 128 bytes.
@@ -305,8 +585,11 @@ STACK:
 ; components.
 ;
 LOADP:
-PBOOT:	EQU	$		;Relative offset of BOOT (0 * 128)
-PBIOS:	EQU	$+128		;Relative offset of BIOS (1 * 128)
-PDOS:	EQU	$+1152		;Relative offset of 86DOS (9 * 128)
-PCMD:	EQU	$+4480		;Relative offset of TMPCMD (35 * 128)
-
+PBOOT:	EQU	$+OBOOT		;Relative offset of BOOT 
+PBIOS:	EQU	$+OBIOS		;Relative offset of BIOS
+PDOS:	EQU	$+ODOS		;Relative offset of 86-DOS
+PFAT1:	EQU	$+OFAT1		;Relative offset of FAT 1
+PFAT2:	EQU	$+OFAT2		;Relative offset of FAT 2
+PDIR:	EQU	$+ODIR		;Relative offset of directory
+PUSER:	EQU	$+OUSER		;Relative offset of user area
+

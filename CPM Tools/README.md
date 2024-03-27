@@ -51,7 +51,7 @@ This assembler can only produce Intel HEX files for object code, therefore you m
 ## DOSGEN
 This is a tool I wrote to copy 86-DOS system files to the system area of IBM 8" SSSD floppies. It works in a similar way to CP/M's <code>SYSGEN</code> utility.
 
-DOSGEN takes the following parameters: <code>[x:]DOSGEN y: [T]</code>
+DOSGEN takes the following parameters: <code>[x:]DOSGEN y: [N]</code>
 
 where
 
@@ -70,10 +70,10 @@ where
             <td>is a disk drive specifier indicating the disk upon which the 86-DOS system is to be written.</td>
         </tr>
         <tr>
-            <td><code>T</code></td>
-            <td>is an optional switch indicating that a temporary copy of the system is to be used. A temporary system includes a temporary BIOS and a temporary command interpreter. Normally, the BIOS uses DOS to load the command interpreter, <code>COMMAND.COM</code>, from the file area. The temporary BIOS loads the command interpreter directly from the system area. This is useful when 86-DOS is being built and deployed for the first time, as the command interpreter cannot be put into the file area without a working copy of DOS, and a working copy of DOS needs the command interpreter. The temporary command interpreter differs from the normal command interpreter in that it includes <code>RDCPM</code> as an internal command. This is needed for copying the actual command interpreter from CP/M disks to DOS disks once the temporary system is booted.</td>
+            <td><code>N</code></td>
+            <td>is an optional switch indicating that a new file system is to be put on the destination disk. If this switch is specified, a file system with the files <code>COMMAND.COM</code> and <code>RDCPM.COM</code> will be written alongside the system.</td>
         </tr>
     </tbody>
 </table>
 
- To copy 86-DOS to a new floppy disk, you must have the files <code>BOOT.COM</code>, <code>DOSIO.COM</code> and <code>86DOS.COM</code> on the current drive. If a temporary system is to be copied, <code>TMPBIO.COM</code> and <code>TMPCMD.COM</code> must also exist.
+ To copy 86-DOS to a new floppy disk, you must have the files <code>BOOT.COM</code>, <code>DOSIO.COM</code> and <code>86DOS.COM</code> on the current drive. If a new file system is to be created, <code>COMMAND.COM</code> and <code>RDCPM.COM</code> must also exist.
