@@ -1,18 +1,11 @@
 # 86-DOS 0.11 Source Code Reconstruction
 Full source code reconstruction of 86-DOS 0.11 - the earliest released version of the earliest operating system for the Intel x86 architecture.
 
+> [!IMPORTANT]
+> All 8086 assembly language source files in this repository should use the extension .A86; however, I have chosen to use the extension .ASM instead because GitHub does not detect .A86 files as assembly. To build the source code under CP/M or Cromemco CDOS, you must rename all .ASM files to .A86.
+
 ## Progress
-<img src="./.progress/boot.svg">
-<img src="./.progress/bios.svg">
-<img src="./.progress/kernel.svg">
-<img src="./.progress/asm.svg">
-<img src="./.progress/chess.svg">
-<img src="./.progress/command.svg">
-<img src="./.progress/edlin.svg">
-<img src="./.progress/hex2bin.svg">
-<img src="./.progress/rdcpm.svg">
-<img src="./.progress/sys.svg">
-<img src="./.progress/trans.svg">
+<img src="./.progress/boot.svg"> <img src="./.progress/bios.svg"> <img src="./.progress/kernel.svg"> <img src="./.progress/asm.svg"> <img src="./.progress/chess.svg"> <img src="./.progress/command.svg"> <img src="./.progress/edlin.svg"> <img src="./.progress/hex2bin.svg"> <img src="./.progress/rdcpm.svg"> <img src="./.progress/sys.svg"> <img src="./.progress/trans.svg">
 
 ## Author
 This software was written by [@TimPaterson](https://github.com/TimPaterson) in 1980. The reconstructed source code in this repository compiles back to the exact same binaries shipped by Seattle Computer Products. Therefore, it can be fully regrded as Paterson's work.
@@ -32,25 +25,7 @@ This project acknowledges the intellectual property rights of Microsoft Corporat
 By accessing and using the reconstructed source code provided in this repository, you agree to do so at your own risk and assume all responsibility for any legal implications that may arise.
 
 ## Building
-All source files must be built using Seattle Computer Products' ASM-86 assembler. According to binary fragments found in the uninitialized data areas of executables, this version of 86-DOS was originally built under CDOS 2.x (a CP/M-like operating system developed by Cromemco). All assembly language source files in this repository use the extension <code>.ASM</code>, so that they are accepted by the DOS version of the ASM-86 assembler, branded simply as ASM. Should this operating system be built under CDOS or CP/M, the extensions of the source files must be changed to <code>.A86</code>.
-
-### Source to Object
-To assemble a source file, invoke ASM with the command line:
-
-<code>ASM \<source-file-name\></code>
-
-Where \<source-file-name\> is the file name (without extension) of the <code>.ASM</code> source file. It will automatically produce the files <code>\<source-file-name\>.HEX</code> and <code>\<source-file-name\>.PRN</code> - the object code in Intel HEX format and the listing file, respectively. It is possible to disable the listing file, please refer to the ASM-86 manual for that.
-
-### Object to Binary
-To convert an object file to a binary executable, invoke HEX2BIN with the command line:
-
-<code>HEX2BIN \<object-file-name\></code>
-
-Where \<object-file-name\> is the file name (without extension) of the <code>.HEX</code> object file. It will automatically produce the binary file <code>\<object-file-name\>.COM</code>.
-
-> [!NOTE]
-> All source files must end with the byte <code>0x1A</code> (EOF marker) and be padded to the nearest 128 bytes. This requirement exists because early versions of 86-DOS behaved similarly to CP/M, storing files in terms of 128-byte records instead of individual bytes.<br><br>
-> While the SCP ASM assembler can run under MS-DOS and 32-bit Windows, it is recommended that you use 86-DOS 0.11 itself to modify and assemble the source files, in adherence to the aforementioned requirements.
+*See [Building 86-DOS 0.11](./Building.md).*
 
 ## Special Thanks
 * [@TimPaterson](https://github.com/TimPaterson) - For writing this amazing OS.
