@@ -48,6 +48,36 @@ This assembler can only produce Intel HEX files for object code, therefore you m
 > [!TIP]
 > Don't forget to rename the source files from <code>.ASM</code> to <code>.A86</code>.
 
+## TRANS86
+This is a reconstruction of the SCP Z80 to 8086 Translator shipped together with ASM86. Like ASM86, original copies are long gone and this is the 8086 version from 86-DOS 0.11 translated back to Z80.
+
+TRANS86 takes the following parameters: <code>[x:]TRANS86 [y:]name.ext</code>
+
+where
+
+<table>
+    <colgroup>
+        <col style="width: 15%;">
+        <col style="width: 85%;">
+    </colgroup>
+    <tbody>
+        <tr>
+            <td>x</td>
+            <td>is an optional disk drive specifier indicating the location of the <code>TRANS86.COM</code> file. This parameter is required only if the COM file is <u>NOT</u> located on either drive A or the current drive. Legal values are A, B, C, and D.</td>
+        </tr>
+        <tr>
+            <td>y</td>
+            <td>is an optional disk drive specifier indicating the location of the Z80 source file. This paramter may be omitted if the source file is on the current drive.</td>
+        </tr>
+        <tr>
+            <td>name.ext</td>
+            <td>is the name of the Z80 assembly language source file, with the 3-letter extension.</td>
+        </tr>
+    </tbody>
+</table>
+
+The output 8086 source file will have the same name as the Z80 source file, but with the extension .A86.
+
 ## DOSGEN
 This is a tool I wrote to copy 86-DOS system files to the system area of IBM 8" SSSD floppies. It works in a similar way to CP/M's <code>SYSGEN</code> utility.
 
