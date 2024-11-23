@@ -210,7 +210,7 @@ Offset(h) 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
 
 ```
 
-What we first see is a string <code>ile name\r\n$</code>. If we examin <code>RDCPM.COM</code>, we will see that it has the exact same string at offset <code>0x1D5</code>. So, we are probably looking at a partial memory dump of <code>RDCPM</code>. There is a 1-byte size difference between that copy of <code>RDCPM.COM</code> and 86-DOS 0.11's <code>RDCPM.COM</code>, because the string ends at offset <code>0xE</code> of that paragraph instead of <code>0xF</code>. Since we have identified the origin of the data, we can take a look at the <code>RDCPM</code> source code to determine the meaning of the rest of the data.
+What we first see is a string <code>ile name\r\n$</code>. If we examine <code>RDCPM.COM</code>, we will see that it has the exact same string at offset <code>0x1D5</code>. So, we are probably looking at a partial memory dump of <code>RDCPM</code>. There is a 1-byte size difference between that copy of <code>RDCPM.COM</code> and 86-DOS 0.11's <code>RDCPM.COM</code>, because the string ends at offset <code>0xE</code> of that paragraph instead of <code>0xF</code>. Since we have identified the origin of the data, we can take a look at the <code>RDCPM</code> source code to determine the meaning of the rest of the data.
 
 ```x86asm
 BADFN:	DB	13,10,"Bad file name",13,10,"$"
@@ -263,7 +263,7 @@ Offset(h) 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
 | SYS.BAK | 640 | 1 | 38 |
 | COMMAND.HEX | ? | ? | ? |
 
-There's nothing particularly interesting here, but <code>SYS.BAK</code> (presumably produced by editing <code>SYS.A86</code> with <code>EDIT</code>) had the exact same size as my reconstructed <code>SYS.A86</code>, so my <code>SYS</code> disassembly can't be too far off the original. I'm not sure what that .A86 file was, but my educated guess is it was <code>COMMAND.A86</code>.
+There's nothing particularly interesting here, but <code>SYS.BAK</code> (presumably produced by editing <code>SYS.A86</code> with <code>EDIT</code> or WordMaster) had the exact same size as my reconstructed <code>SYS.A86</code>, so my <code>SYS</code> disassembly can't be too far off the original. I'm not sure what that .A86 file was, but my educated guess is it was <code>COMMAND.A86</code>.
 
 #### File Sizes and RDCPM
 The size of files copied off CP/M disks should always be multiples of the block size of the CP/M disk, because <code>RDCPM</code> completely ignores the record count and uses only the block pointers to determine when to stop reading. For instance, if the record size is 1K and the file size is 128, when transferred to a DOS disk with <code>RDCPM</code>, it will be 1024 bytes long.

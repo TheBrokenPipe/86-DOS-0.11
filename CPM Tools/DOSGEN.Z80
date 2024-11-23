@@ -364,7 +364,7 @@ RECTOCLS:
 
 ;
 ; Adds a file pointed to by its FCB in IX to the system FAT image.
-; All registers destroyed. Does not return of the file cannopt be
+; All registers destroyed. Does not return if the file cannopt be
 ; opened and read. (CURCLS), (CURDIR) and (CURPTR) automatically
 ; incremented.
 ;
